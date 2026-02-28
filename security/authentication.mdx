@@ -1,0 +1,534 @@
+---
+title: Authentication security
+description: Deep dive into Echo's authentication architecture and security measures
+---
+
+## Overview
+
+Echo's authentication system is designed with privacy and security as core principles. Unlike traditional platforms, Echo never stores your email or password in retrievable form.
+
+## Security architecture
+
+Echo uses a multi-layered approach to protect user credentials:
+
+<Steps>
+  <Step title="Cryptographic hashing">
+    User credentials are transformed into an irreversible hash:
+
+    ```typescript lib/utils.ts
+    import { createHash } from 'crypto';
+
+    export function generateUserHash(
+      email: string,
+      password: string
+    ): string {
+      const salt = process.env.AUTH_SALT;
+      const combined = `${email}:${password}:${salt}`;
+      return createHash('sha256').update(combined).digest('hex');
+    }
+    ```
+
+    **Security properties**:
+    - SHA-256 is a one-way cryptographic hash function
+    - Salt prevents rainbow table attacks
+    - Combines email + password + salt for uniqueness
+    - Output is deterministic (same inputs = same hash)
+    - Irreversible (can't recover email/password from hash)
+  </Step>
+
+  <Step title="Database storage">
+    Only the hash is stored:
+
+    ```prisma
+    model User {
+      id       String @id @default(cuid())
+      userHash String @unique  // Only this is stored
+      username String @unique
+      // Email and password are NEVER stored
+    }
+    ```
+
+    **Benefits**:
+    - Database breach doesn't expose emails/passwords
+    - Staff can't access user credentials
+    - Compliance with privacy regulations
+  </Step>
+
+  <Step title="Session tokens">
+    After authentication, JWT tokens manage sessions:
+
+    ```typescript
+    // lib/auth.ts
+    export const config = {
+      session: {
+        strategy: "jwt",
+        maxAge: 60 * 60 * 24 * 30, // 30 days
+        updateAge: 60 * 60 * 24,   // Refresh every 24h
+      },
+      secret: process.env.NEXTAUTH_SECRET,
+    };
+    ```
+
+    Tokens are:
+    - Encrypted with `NEXTAUTH_SECRET`
+    - Stored as HTTP-only cookies
+    - Automatically refreshed
+    - Invalidated on logout
+  </Step>
+</Steps>
+
+## Authentication flow
+
+<Tabs>
+  <Tab title="Signup">
+    ```mermaid
+    sequenceDiagram
+        participant U as User
+        participant C as Client
+        participant S as Server
+        participant DB as Database
+        participant E as Email Service
+
+        U->>C: Enter email
+        C->>S: Validate college domain
+        S-->>C: College confirmed
+        C->>S: Request verification code
+        S->>E: Send code to email
+        E-->>U: Verification email
+        U->>C: Enter code
+        C->>S: Verify code
+        S-->>C: Code valid
+        U->>C: Enter username & password
+        C->>S: Create account
+        S->>S: Generate userHash
+        S->>DB: Store userHash + username
+        S-->>C: Account created
+        C->>S: Auto-login
+        S-->>C: Session token
+    ```
+
+    **Security measures**:
+    1. Email domain validation prevents fake accounts
+    2. Verification code proves email ownership
+    3. Password requirements enforce strong passwords
+    4. Username uniqueness prevents impersonation
+    5. userHash prevents credential exposure
+  </Tab>
+
+  <Tab title="Login">
+    ```mermaid
+    sequenceDiagram
+        participant U as User
+        participant C as Client
+        participant S as Server
+        participant DB as Database
+
+        U->>C: Enter email & password
+        C->>S: Login request
+        S->>S: Generate userHash from credentials
+        S->>DB: Query user by userHash
+        DB-->>S: User found/not found
+        alt User found
+            S-->>C: Create session token
+            C-->>U: Redirect to dashboard
+        else User not found
+            S-->>C: Invalid credentials
+            C-->>U: Show error
+        end
+    ```
+
+    **Security measures**:
+    1. No separate password verification - hash comparison only
+    2. Generic error message (doesn't reveal if email exists)
+    3. Rate limiting prevents brute force
+    4. Session token in HTTP-only cookie
+  </Tab>
+
+  <Tab title="Session validation">
+    ```typescript
+    // On every protected request
+    import { getServerSession } from 'next-auth';
+    import { config } from '@/lib/auth';
+
+    export async function GET(req: Request) {
+      const session = await getServerSession(config);
+
+      if (!session?.user) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+
+      // Session contains: { id, username, college, isAdmin }
+      // NO email or password
+    }
+    ```
+
+    Sessions are validated on:
+    - Every API request
+    - Server component renders
+    - Client-side route changes
+  </Tab>
+</Tabs>
+
+## Password requirements
+
+Echo enforces strong password policies:
+
+```typescript lib/utils.ts
+export function validatePassword(password: string): boolean {
+  // Length: 8-50 characters
+  if (password.length < 8 || password.length > 50) {
+    return false;
+  }
+
+  // Must contain:
+  const hasUppercase = /[A-Z]/.test(password);
+  const hasLowercase = /[a-z]/.test(password);
+  const hasNumber = /[0-9]/.test(password);
+  const hasSpecial = /[^A-Za-z0-9]/.test(password);
+
+  return hasUppercase && hasLowercase && hasNumber && hasSpecial;
+}
+```
+
+**Requirements**:
+- ✅ 8-50 characters
+- ✅ At least one uppercase letter (A-Z)
+- ✅ At least one lowercase letter (a-z)
+- ✅ At least one number (0-9)
+- ✅ At least one special character (!@#$%^&*)
+
+<Warning>
+  These requirements significantly increase password entropy and resistance to brute force attacks.
+</Warning>
+
+## Email verification
+
+Echo uses a secure email verification flow:
+
+<CodeGroup>
+```typescript Send Code
+// POST /api/verifyCollege/send
+export async function POST(req: Request) {
+  const { email } = await req.json();
+
+  // Generate 15-character random code
+  const code = crypto.randomBytes(8).toString('hex').substring(0, 15);
+
+  // Store code in Redis with 15-minute expiration
+  await redis.set(
+    `verify:${email}`,
+    code,
+    { ex: 900 } // 15 minutes
+  );
+
+  // Send email via Resend
+  await resend.emails.send({
+    from: 'noreply@echo.app',
+    to: email,
+    subject: 'Verify your Echo account',
+    html: `Your verification code is: <strong>${code}</strong>`,
+  });
+
+  return NextResponse.json({ success: true });
+}
+```
+
+```typescript Verify Code
+// POST /api/verifyCollege/verify
+export async function POST(req: Request) {
+  const { email, code } = await req.json();
+
+  // Retrieve stored code from Redis
+  const storedCode = await redis.get(`verify:${email}`);
+
+  if (!storedCode || storedCode !== code) {
+    return NextResponse.json(
+      { error: 'Invalid verification code' },
+      { status: 400 }
+    );
+  }
+
+  // Delete code after successful verification
+  await redis.del(`verify:${email}`);
+
+  return NextResponse.json({ success: true });
+}
+```
+</CodeGroup>
+
+**Security properties**:
+- 15-character codes are computationally infeasible to guess
+- Codes expire after 15 minutes
+- One-time use (deleted after verification)
+- Stored in Redis, not database
+- Rate limited to prevent spam
+
+## Session management
+
+NextAuth.js handles secure session management:
+
+<Accordion title="Session configuration">
+  ```typescript
+  export const config = {
+    session: {
+      strategy: "jwt",
+      maxAge: 60 * 60 * 24 * 30,        // 30 days
+      updateAge: 60 * 60 * 24,          // Refresh daily
+      generateSessionToken: () => {
+        return randomBytes(64).toString('hex');
+      },
+    },
+    cookies: {
+      sessionToken: {
+        name: 'next-auth.session-token',
+        options: {
+          httpOnly: true,      // Not accessible via JavaScript
+          sameSite: 'lax',     // CSRF protection
+          path: '/',
+          secure: process.env.NODE_ENV === 'production', // HTTPS only in prod
+        },
+      },
+    },
+  };
+  ```
+</Accordion>
+
+<Accordion title="JWT payload">
+  ```typescript
+  // What's stored in the JWT
+  {
+    id: "user_cuid",
+    username: "johndoe",
+    college: "University Name",
+    isAdmin: false,
+    iat: 1234567890,  // Issued at
+    exp: 1237159890,  // Expires at
+  }
+
+  // NOT stored:
+  // - email
+  // - password
+  // - userHash
+  // - any sensitive data
+  ```
+</Accordion>
+
+<Accordion title="Session refresh">
+  ```typescript
+  // Automatic refresh when session is older than updateAge
+  callbacks: {
+    async jwt({ token, user, trigger, session }) {
+      // On sign in
+      if (user) {
+        token.id = user.id;
+        token.username = user.username;
+        token.college = user.college;
+        token.isAdmin = user.isAdmin;
+      }
+
+      // On manual update
+      if (trigger === 'update' && session?.user) {
+        token.username = session.user.username;
+      }
+
+      return token;
+    },
+  }
+  ```
+</Accordion>
+
+## Security headers
+
+Recommended security headers for Next.js:
+
+```javascript next.config.js
+const securityHeaders = [
+  {
+    key: 'X-DNS-Prefetch-Control',
+    value: 'on'
+  },
+  {
+    key: 'Strict-Transport-Security',
+    value: 'max-age=63072000; includeSubDomains; preload'
+  },
+  {
+    key: 'X-Frame-Options',
+    value: 'SAMEORIGIN'
+  },
+  {
+    key: 'X-Content-Type-Options',
+    value: 'nosniff'
+  },
+  {
+    key: 'X-XSS-Protection',
+    value: '1; mode=block'
+  },
+  {
+    key: 'Referrer-Policy',
+    value: 'origin-when-cross-origin'
+  },
+];
+
+module.exports = {
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: securityHeaders,
+      },
+    ];
+  },
+};
+```
+
+## Threat mitigation
+
+<CardGroup cols={2}>
+  <Card title="Brute force attacks" icon="shield-halved">
+    **Protection**: Rate limiting via Upstash Redis
+    
+    - Login attempts limited
+    - IP-based blocking
+    - Exponential backoff
+  </Card>
+  <Card title="SQL injection" icon="database">
+    **Protection**: Prisma ORM parameterized queries
+    
+    - No raw SQL in user input
+    - Type-safe queries
+    - Automatic escaping
+  </Card>
+  <Card title="XSS attacks" icon="code">
+    **Protection**: React automatic escaping
+    
+    - HTML sanitization
+    - Content Security Policy
+    - Secure by default
+  </Card>
+  <Card title="CSRF attacks" icon="arrows-rotate">
+    **Protection**: SameSite cookies
+    
+    - CSRF tokens
+    - Origin validation
+    - Secure cookie settings
+  </Card>
+  <Card title="Session hijacking" icon="user-secret">
+    **Protection**: HTTP-only cookies
+    
+    - HTTPS only in production
+    - Secure cookie flags
+    - Regular rotation
+  </Card>
+  <Card title="Man-in-the-middle" icon="network-wired">
+    **Protection**: HTTPS/TLS encryption
+    
+    - SSL/TLS required
+    - HSTS headers
+    - Secure protocols only
+  </Card>
+</CardGroup>
+
+## Account recovery
+
+<Warning>
+  **Important limitation**: Because Echo doesn't store emails, account recovery is not possible if you forget your password.
+</Warning>
+
+Users must:
+- Remember their email and password
+- Use a password manager
+- Create a new account if credentials are lost
+
+**Trade-off**: Maximum privacy vs. convenience
+
+If you need account recovery, you could:
+1. Store encrypted email addresses
+2. Implement password reset via email
+3. Use passkey authentication (WebAuthn)
+
+## Best practices
+
+<Steps>
+  <Step title="Secure environment variables">
+    ```bash
+    # Never commit these!
+    NEXTAUTH_SECRET="[use: openssl rand -base64 32]"
+    AUTH_SALT="[use: openssl rand -hex 32]"
+    
+    # Rotate periodically
+    # Store in secure vault (1Password, AWS Secrets Manager)
+    ```
+  </Step>
+
+  <Step title="Enable HTTPS">
+    - Always use HTTPS in production
+    - Redirect HTTP to HTTPS
+    - Enable HSTS headers
+    - Use valid SSL certificates
+  </Step>
+
+  <Step title="Monitor authentication">
+    ```typescript
+    // Log failed login attempts
+    if (!user) {
+      logger.warn('Failed login attempt', {
+        ip: req.ip,
+        userAgent: req.headers.get('user-agent'),
+        timestamp: new Date(),
+      });
+    }
+    ```
+  </Step>
+
+  <Step title="Regular security audits">
+    - Review authentication logs
+    - Check for suspicious patterns
+    - Update dependencies
+    - Test authentication flows
+  </Step>
+</Steps>
+
+## Compliance considerations
+
+<Accordion title="GDPR compliance">
+  Echo's architecture supports GDPR:
+
+  - **Right to erasure**: Delete user record (userHash isn't PII)
+  - **Data minimization**: Only stores necessary data
+  - **Pseudonymization**: userHash instead of email
+  - **Security**: Cryptographic protection
+
+  ```typescript
+  // Delete user data
+  await db.user.delete({
+    where: { id: userId },
+    // Cascade deletes posts, likes, etc.
+  });
+  ```
+</Accordion>
+
+<Accordion title="FERPA compliance (US education)">
+  Echo doesn't store student records, only anonymous social data:
+
+  - No personally identifiable information
+  - No academic records
+  - No directory information
+  - College affiliation only
+</Accordion>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Rate limiting" icon="gauge" href="/security/rate-limiting">
+    Protect against abuse with Upstash Redis
+  </Card>
+  <Card title="Content moderation" icon="shield-check" href="/security/content-moderation">
+    Keep the platform safe with NSFW detection
+  </Card>
+  <Card title="Privacy settings" icon="eye-slash" href="/features/privacy">
+    User privacy controls and best practices
+  </Card>
+  <Card title="Environment setup" icon="gear" href="/deployment/environment">
+    Secure environment variable configuration
+  </Card>
+</CardGroup>

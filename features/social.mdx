@@ -1,0 +1,548 @@
+---
+title: Social features
+description: Likes, dislikes, reposts, and follows - build connections on Echo
+---
+
+## Overview
+
+Echo provides rich social features to help you engage with content and connect with other users in your college community, all while maintaining anonymity.
+
+## Likes and dislikes
+
+Show your reaction to posts with likes and dislikes.
+
+<Tabs>
+  <Tab title="Like a post">
+    ```typescript
+    // POST /api/post/toggle/like
+    const response = await fetch('/api/post/toggle/like', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        postId: "clx123..."
+      })
+    });
+
+    // Toggles like on/off
+    // If you already liked the post, it removes the like
+    // If you disliked the post, it removes dislike and adds like
+    ```
+
+    <Info>
+      Liking a post sends a notification to the original author.
+    </Info>
+  </Tab>
+
+  <Tab title="Dislike a post">
+    ```typescript
+    // POST /api/post/toggle/dislike
+    const response = await fetch('/api/post/toggle/dislike', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        postId: "clx123..."
+      })
+    });
+
+    // Toggles dislike on/off
+    // Dislikes and likes are mutually exclusive
+    ```
+
+    <Note>
+      Unlike likes, dislikes do not send notifications to the author.
+    </Note>
+  </Tab>
+</Tabs>
+
+### Like/Dislike behavior
+
+Likes and dislikes are mutually exclusive:
+
+- If you **like** a post you previously **disliked**, the dislike is removed
+- If you **dislike** a post you previously **liked**, the like is removed
+- Clicking the same reaction twice removes it
+
+<CodeGroup>
+```prisma Like Model
+model Like {
+  createdAt DateTime @default(now())
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+
+  @@id([postId, userId])
+  @@index([userId])
+  @@index([postId])
+}
+```
+
+```prisma Dislike Model
+model Dislike {
+  createdAt DateTime @default(now())
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+
+  @@id([postId, userId])
+  @@index([userId])
+  @@index([postId])
+}
+```
+</CodeGroup>
+
+## Reposts
+
+Share interesting posts with your followers by reposting them to your timeline.
+
+<Steps>
+  <Step title="Repost a post">
+    Click the repost button on any post:
+
+    ```typescript
+    // POST /api/post/toggle/repost
+    const response = await fetch('/api/post/toggle/repost', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        postId: "clx123..."
+      })
+    });
+
+    // Toggles repost on/off
+    ```
+  </Step>
+
+  <Step title="Notification sent">
+    The original author receives a notification:
+
+    ```typescript
+    // Created automatically when you repost
+    {
+      type: "REPOST",
+      message: "@username reposted your post",
+      senderUserId: "your_user_id",
+      receiverUserId: "author_user_id",
+      postId: "clx123..."
+    }
+    ```
+  </Step>
+
+  <Step title="Appears in feed">
+    The repost appears in your followers' feeds with attribution to both you and the original author.
+  </Step>
+</Steps>
+
+### Repost schema
+
+```prisma
+model Repost {
+  createdAt DateTime @default(now())
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+
+  @@id([postId, userId])
+  @@index([userId])
+}
+```
+
+<Note>
+  You can only repost each post once. Clicking repost again removes your repost.
+</Note>
+
+## Following users
+
+Build your network by following users whose content you enjoy.
+
+<Tabs>
+  <Tab title="Follow">
+    ```typescript
+    // POST /api/follow
+    const response = await fetch('/api/follow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: "johndoe"
+      })
+    });
+
+    // If not following: Follows the user
+    // If already following: Unfollows the user
+    ```
+
+    When you follow someone:
+    1. You start seeing their posts in your feed
+    2. They receive a notification
+    3. They can see you in their followers list
+  </Tab>
+
+  <Tab title="Unfollow">
+    ```typescript
+    // Same endpoint - toggles follow status
+    await fetch('/api/follow', {
+      method: 'POST',
+      body: JSON.stringify({ username: "johndoe" })
+    });
+
+    // If following: Unfollows
+    // If not following: Follows
+    ```
+
+    <Info>
+      Unfollowing is silent - the user doesn't receive a notification.
+    </Info>
+  </Tab>
+
+  <Tab title="Check status">
+    ```typescript
+    // GET /api/follow/is?username=johndoe
+    const response = await fetch('/api/follow/is?username=johndoe');
+    const { isFollowing } = await response.json();
+
+    // Returns: { isFollowing: true/false }
+    ```
+  </Tab>
+</Tabs>
+
+### Follow implementation
+
+<CodeGroup>
+```typescript Follow API
+// POST /api/follow
+export async function POST(request: Request) {
+  const session = await getServerSession(config);
+  if (!session?.user) {
+    return new NextResponse("Unauthorized", { status: 401 });
+  }
+
+  const { username } = await request.json();
+
+  const currentUser = await db.user.findUnique({
+    where: { id: session.user.id },
+  });
+
+  const userToFollow = await db.user.findUnique({
+    where: { username },
+  });
+
+  if (!userToFollow) {
+    return new NextResponse("User not found", { status: 404 });
+  }
+
+  // Check if already following
+  const isAlreadyFollowing = await db.user.findFirst({
+    where: {
+      id: currentUser.id,
+      following: {
+        some: { id: userToFollow.id },
+      },
+    },
+  });
+
+  if (isAlreadyFollowing) {
+    // Unfollow
+    await db.user.update({
+      where: { id: currentUser.id },
+      data: {
+        following: { disconnect: { id: userToFollow.id } },
+      },
+    });
+    return NextResponse.json({ message: "Unfollowed successfully" });
+  }
+
+  // Follow
+  await db.$transaction([
+    db.user.update({
+      where: { id: currentUser.id },
+      data: {
+        following: { connect: { id: userToFollow.id } },
+      },
+    }),
+    db.notification.create({
+      data: {
+        type: "FOLLOW",
+        message: `@${currentUser.username} started following you`,
+        senderUserId: currentUser.id,
+        receiverUserId: userToFollow.id,
+      },
+    }),
+  ]);
+
+  return NextResponse.json({ message: "Followed successfully" });
+}
+```
+
+```prisma User Relations
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  followers User[]   @relation(name: "followers")
+  following User[]   @relation(name: "followers")
+  // ... other fields
+}
+```
+</CodeGroup>
+
+### Follow restrictions
+
+<Warning>
+  You cannot follow yourself. The API returns a 400 error if you try.
+</Warning>
+
+```typescript
+if (currentUser.id === userToFollow.id) {
+  return new NextResponse("Cannot follow yourself", { status: 400 });
+}
+```
+
+## Notifications
+
+Social interactions trigger real-time notifications:
+
+<Tabs>
+  <Tab title="Like">
+    ```typescript
+    {
+      type: "LIKE",
+      message: "@username liked your post",
+      senderUserId: "liker_id",
+      receiverUserId: "author_id",
+      postId: "post_id"
+    }
+    ```
+  </Tab>
+
+  <Tab title="Reply">
+    ```typescript
+    {
+      type: "REPLY",
+      message: "@username replied to your post",
+      senderUserId: "replier_id",
+      receiverUserId: "author_id",
+      postId: "reply_post_id"
+    }
+    ```
+  </Tab>
+
+  <Tab title="Follow">
+    ```typescript
+    {
+      type: "FOLLOW",
+      message: "@username started following you",
+      senderUserId: "follower_id",
+      receiverUserId: "followed_user_id"
+    }
+    ```
+  </Tab>
+
+  <Tab title="Repost">
+    ```typescript
+    {
+      type: "REPOST",
+      message: "@username reposted your post",
+      senderUserId: "reposter_id",
+      receiverUserId: "author_id",
+      postId: "post_id"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Notification types
+
+```prisma
+enum NotificationType {
+  ADMIN   // Admin announcements (public)
+  LIKE    // Someone liked your post
+  REPLY   // Someone replied to your post
+  FOLLOW  // Someone followed you
+  REPOST  // Someone reposted your post
+  QUOTE   // Someone quoted your post
+}
+```
+
+## Privacy and visibility
+
+Social features respect privacy settings:
+
+<Accordion title="Private profiles">
+  If a user has a private profile:
+
+  - You can still follow them
+  - Their posts won't appear in your feed unless they approve
+  - You can't see their follower/following lists
+
+  ```prisma
+  enum Privacy {
+    PUBLIC   // Anyone can see profile and posts
+    PRIVATE  // Only approved followers
+  }
+  ```
+</Accordion>
+
+<Accordion title="Post privacy">
+  Post visibility affects social features:
+
+  - **ANYONE**: All social features work normally
+  - **FOLLOWED**: Only followers can like/repost/reply
+  - **MENTIONED**: Only mentioned users can interact
+
+  ```typescript
+  // Post with restricted visibility
+  {
+    text: "Private thought",
+    privacy: "FOLLOWED",
+    // Only followers see this
+  }
+  ```
+</Accordion>
+
+<Accordion title="Anonymous interactions">
+  All interactions are anonymous:
+
+  - Your username is shown, not your real name
+  - No email addresses are exposed
+  - No external profile links
+
+  Users only see: `@username` from `College Name`
+</Accordion>
+
+## Social analytics
+
+View engagement on your profile:
+
+```typescript
+// Get user with counts
+const user = await db.user.findUnique({
+  where: { username },
+  include: {
+    _count: {
+      select: {
+        posts: true,
+        followers: true,
+        following: true,
+        likedPosts: true,
+        reposts: true,
+      },
+    },
+  },
+});
+
+/*
+{
+  username: "johndoe",
+  _count: {
+    posts: 42,
+    followers: 128,
+    following: 93,
+    likedPosts: 256,
+    reposts: 18
+  }
+}
+*/
+```
+
+## Best practices
+
+<CardGroup cols={2}>
+  <Card title="Engage authentically" icon="comments">
+    Like and reply to posts that genuinely interest you. Build real connections.
+  </Card>
+  <Card title="Follow selectively" icon="user-plus">
+    Follow users whose content you want in your feed. Quality over quantity.
+  </Card>
+  <Card title="Repost responsibly" icon="retweet">
+    Only repost content you endorse. Your followers trust your curation.
+  </Card>
+  <Card title="Respect privacy" icon="lock">
+    Honor privacy settings. Don't screenshot or share private content.
+  </Card>
+</CardGroup>
+
+## Common patterns
+
+<AccordionGroup>
+  <Accordion title="Show like button state">
+    ```typescript
+    const [isLiked, setIsLiked] = useState(false);
+    const [likeCount, setLikeCount] = useState(0);
+
+    const toggleLike = async () => {
+      await fetch('/api/post/toggle/like', {
+        method: 'POST',
+        body: JSON.stringify({ postId })
+      });
+
+      setIsLiked(!isLiked);
+      setLikeCount(prev => isLiked ? prev - 1 : prev + 1);
+    };
+    ```
+  </Accordion>
+
+  <Accordion title="Follow button with loading state">
+    ```typescript
+    const [isFollowing, setIsFollowing] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
+
+    const toggleFollow = async () => {
+      setIsLoading(true);
+      try {
+        await fetch('/api/follow', {
+          method: 'POST',
+          body: JSON.stringify({ username })
+        });
+        setIsFollowing(!isFollowing);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    ```
+  </Accordion>
+
+  <Accordion title="Optimistic UI updates">
+    ```typescript
+    const repostMutation = useMutation({
+      mutationFn: (postId: string) => 
+        fetch('/api/post/toggle/repost', {
+          method: 'POST',
+          body: JSON.stringify({ postId })
+        }),
+      onMutate: async (postId) => {
+        // Optimistically update UI
+        await queryClient.cancelQueries(['posts']);
+        const previous = queryClient.getQueryData(['posts']);
+        
+        queryClient.setQueryData(['posts'], (old) => {
+          // Update repost state immediately
+        });
+        
+        return { previous };
+      },
+      onError: (err, variables, context) => {
+        // Rollback on error
+        queryClient.setQueryData(['posts'], context.previous);
+      },
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Notifications" icon="bell" href="/features/notifications">
+    Learn about the notification system
+  </Card>
+  <Card title="Privacy settings" icon="shield" href="/features/privacy">
+    Configure your privacy preferences
+  </Card>
+  <Card title="Posts" icon="pencil" href="/features/posts">
+    Master the posting system
+  </Card>
+  <Card title="Colleges" icon="school" href="/features/colleges">
+    Explore college communities
+  </Card>
+</CardGroup>

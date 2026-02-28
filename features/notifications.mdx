@@ -1,0 +1,565 @@
+---
+title: Notifications
+description: Stay updated with real-time notifications on Echo
+---
+
+## Overview
+
+Echo's notification system keeps you informed about social interactions, replies, follows, and important announcements from your college community.
+
+## Notification types
+
+Echo sends notifications for various events:
+
+<Tabs>
+  <Tab title="Like">
+    When someone likes your post:
+
+    ```typescript
+    {
+      type: "LIKE",
+      message: "@username liked your post",
+      senderUser: { username: "johndoe" },
+      post: {
+        id: "post_id",
+        text: "Your post content..."
+      },
+      createdAt: "2024-01-01T00:00:00.000Z",
+      read: false
+    }
+    ```
+
+    <Info>
+      Click the notification to view the liked post.
+    </Info>
+  </Tab>
+
+  <Tab title="Reply">
+    When someone replies to your post:
+
+    ```typescript
+    {
+      type: "REPLY",
+      message: "@username replied to your post",
+      senderUser: { username: "janedoe" },
+      post: {
+        id: "reply_post_id",
+        text: "The reply content..."
+      },
+      createdAt: "2024-01-01T00:00:00.000Z",
+      read: false
+    }
+    ```
+
+    The `post` field contains the reply, not your original post.
+  </Tab>
+
+  <Tab title="Follow">
+    When someone follows you:
+
+    ```typescript
+    {
+      type: "FOLLOW",
+      message: "@username started following you",
+      senderUser: { username: "newfollower" },
+      post: null,
+      createdAt: "2024-01-01T00:00:00.000Z",
+      read: false
+    }
+    ```
+
+    <Tip>
+      Click to view the follower's profile.
+    </Tip>
+  </Tab>
+
+  <Tab title="Repost">
+    When someone reposts your content:
+
+    ```typescript
+    {
+      type: "REPOST",
+      message: "@username reposted your post",
+      senderUser: { username: "reposter" },
+      post: {
+        id: "original_post_id",
+        text: "Your original post..."
+      },
+      createdAt: "2024-01-01T00:00:00.000Z",
+      read: false
+    }
+    ```
+  </Tab>
+
+  <Tab title="Quote">
+    When someone quotes your post:
+
+    ```typescript
+    {
+      type: "QUOTE",
+      message: "@username quoted your post",
+      senderUser: { username: "quoter" },
+      post: {
+        id: "quote_post_id",
+        text: "Quote with commentary..."
+      },
+      createdAt: "2024-01-01T00:00:00.000Z",
+      read: false
+    }
+    ```
+  </Tab>
+
+  <Tab title="Admin">
+    College-wide announcements from admins:
+
+    ```typescript
+    {
+      type: "ADMIN",
+      message: "Campus closed tomorrow due to weather",
+      senderUser: { username: "admin" },
+      post: null,
+      isPublic: true,
+      createdAt: "2024-01-01T00:00:00.000Z",
+      read: false
+    }
+    ```
+
+    <Warning>
+      Admin notifications are always visible to all users in the college, regardless of privacy settings.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Notification schema
+
+```prisma schema.prisma
+model Notification {
+  id        String           @id @default(cuid())
+  createdAt DateTime         @default(now())
+  read      Boolean          @default(false)
+  type      NotificationType
+  message   String
+  isPublic  Boolean          @default(false)
+
+  senderUserId   String
+  receiverUserId String?
+  senderUser     User    @relation("sender", fields: [senderUserId], references: [id], onDelete: Cascade)
+  receiverUser   User?   @relation("receiver", fields: [receiverUserId], references: [id], onDelete: Cascade)
+
+  postId String?
+  post   Post?   @relation(fields: [postId], references: [id])
+
+  @@index([receiverUserId])
+}
+
+enum NotificationType {
+  ADMIN   // College-wide announcements
+  LIKE    // Someone liked your post
+  REPLY   // Someone replied to your post
+  FOLLOW  // Someone followed you
+  REPOST  // Someone reposted your post
+  QUOTE   // Someone quoted your post
+}
+```
+
+## Viewing notifications
+
+Access your notifications through the UI or API:
+
+<CodeGroup>
+```typescript Fetch Notifications
+// Get all notifications for current user
+const notifications = await db.notification.findMany({
+  where: {
+    OR: [
+      { receiverUserId: session.user.id },
+      { isPublic: true }
+    ]
+  },
+  include: {
+    senderUser: {
+      select: { username: true }
+    },
+    post: {
+      include: {
+        author: {
+          select: { username: true }
+        }
+      }
+    }
+  },
+  orderBy: { createdAt: 'desc' }
+});
+```
+
+```typescript Mark as Read
+// Automatically mark all as read when viewing
+await db.notification.updateMany({
+  where: {
+    receiverUserId: session.user.id,
+    read: false
+  },
+  data: { read: true }
+});
+```
+
+```typescript Count Unread
+// Get unread notification count
+const unreadCount = await db.notification.count({
+  where: {
+    receiverUserId: session.user.id,
+    read: false
+  }
+});
+```
+</CodeGroup>
+
+## Notification page implementation
+
+Echo's notification page from the source:
+
+```typescript app/(dashboard)/notifications/page.tsx
+import { getServerSession } from "next-auth";
+import { config } from "@/lib/auth";
+import { db } from "@/lib/db";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { formatDistanceToNow } from "date-fns";
+
+export default async function NotificationsPage() {
+  const session = await getServerSession(config);
+
+  if (!session?.user) {
+    redirect("/login");
+  }
+
+  const notifications = await db.notification.findMany({
+    where: {
+      OR: [
+        { receiverUserId: session.user.id },
+        { isPublic: true }
+      ],
+    },
+    include: {
+      senderUser: true,
+      post: {
+        include: { author: true },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  // Mark all as read
+  db.notification.updateMany({
+    where: { receiverUserId: session.user.id },
+    data: { read: true },
+  });
+
+  return (
+    <div className="mx-auto max-w-3xl p-8">
+      <div className="mb-8 flex items-center justify-between">
+        <h1 className="text-3xl font-bold">Notifications</h1>
+        <span className="badge">
+          {notifications.length} notification{notifications.length !== 1 && 's'}
+        </span>
+      </div>
+
+      <div className="space-y-4">
+        {notifications.map((notification) => (
+          <NotificationCard key={notification.id} notification={notification} />
+        ))}
+
+        {notifications.length === 0 && (
+          <EmptyState />
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+## Creating notifications
+
+Notifications are automatically created by social actions:
+
+<Accordion title="On follow">
+  ```typescript
+  // When user A follows user B
+  await db.$transaction([
+    db.user.update({
+      where: { id: userA.id },
+      data: {
+        following: { connect: { id: userB.id } }
+      }
+    }),
+    db.notification.create({
+      data: {
+        type: "FOLLOW",
+        message: `@${userA.username} started following you`,
+        senderUserId: userA.id,
+        receiverUserId: userB.id
+      }
+    })
+  ]);
+  ```
+</Accordion>
+
+<Accordion title="On like">
+  ```typescript
+  // When user likes a post
+  await db.$transaction([
+    db.like.create({
+      data: {
+        userId: liker.id,
+        postId: post.id
+      }
+    }),
+    db.notification.create({
+      data: {
+        type: "LIKE",
+        message: `@${liker.username} liked your post`,
+        senderUserId: liker.id,
+        receiverUserId: post.authorId,
+        postId: post.id
+      }
+    })
+  ]);
+  ```
+</Accordion>
+
+<Accordion title="On reply">
+  ```typescript
+  // When user replies to a post
+  const reply = await db.post.create({
+    data: {
+      text: replyContent,
+      authorId: replier.id,
+      parentPostId: originalPost.id
+    }
+  });
+
+  await db.notification.create({
+    data: {
+      type: "REPLY",
+      message: `@${replier.username} replied to your post`,
+      senderUserId: replier.id,
+      receiverUserId: originalPost.authorId,
+      postId: reply.id
+    }
+  });
+  ```
+</Accordion>
+
+<Accordion title="Admin announcement">
+  ```typescript
+  // Admin creates public notification
+  await db.notification.create({
+    data: {
+      type: "ADMIN",
+      message: "Important campus announcement",
+      senderUserId: admin.id,
+      receiverUserId: null, // null = public
+      isPublic: true
+    }
+  });
+  ```
+</Accordion>
+
+## Notification settings
+
+While Echo doesn't currently implement granular notification settings, you could add:
+
+<CardGroup cols={2}>
+  <Card title="Email notifications" icon="envelope">
+    Send email digests for important notifications using Resend.
+  </Card>
+  <Card title="Mute users" icon="volume-slash">
+    Hide notifications from specific users without unfollowing.
+  </Card>
+  <Card title="Notification filters" icon="filter">
+    Choose which types of notifications you want to receive.
+  </Card>
+  <Card title="Quiet hours" icon="moon">
+    Disable notifications during specific hours.
+  </Card>
+</CardGroup>
+
+## Real-time notifications
+
+For real-time updates, consider implementing:
+
+<Tabs>
+  <Tab title="Polling">
+    ```typescript
+    // Poll for new notifications every 30 seconds
+    const { data: notifications } = useQuery({
+      queryKey: ['notifications'],
+      queryFn: fetchNotifications,
+      refetchInterval: 30000, // 30 seconds
+    });
+    ```
+
+    **Pros**: Simple, works everywhere
+    
+    **Cons**: Not instant, higher server load
+  </Tab>
+
+  <Tab title="Server-Sent Events">
+    ```typescript
+    // Server sends events when notifications are created
+    export async function GET(req: Request) {
+      const stream = new TransformStream();
+      const writer = stream.writable.getWriter();
+
+      // Send new notifications as they're created
+      const interval = setInterval(async () => {
+        const newNotifs = await checkForNewNotifications();
+        if (newNotifs.length > 0) {
+          await writer.write(
+            `data: ${JSON.stringify(newNotifs)}\n\n`
+          );
+        }
+      }, 5000);
+
+      return new Response(stream.readable);
+    }
+    ```
+
+    **Pros**: Real-time, efficient
+    
+    **Cons**: Requires server support
+  </Tab>
+
+  <Tab title="WebSockets">
+    ```typescript
+    // Bi-directional real-time communication
+    const ws = new WebSocket('wss://echo.app/notifications');
+
+    ws.onmessage = (event) => {
+      const notification = JSON.parse(event.data);
+      addNotification(notification);
+      showToast(notification.message);
+    };
+    ```
+
+    **Pros**: True real-time, bi-directional
+    
+    **Cons**: More complex, requires WebSocket server
+  </Tab>
+</Tabs>
+
+## Notification badge
+
+Show unread notification count:
+
+```typescript
+const NotificationBadge = () => {
+  const { data } = useQuery({
+    queryKey: ['unread-count'],
+    queryFn: async () => {
+      const res = await fetch('/api/notifications/unread');
+      return res.json();
+    },
+    refetchInterval: 10000, // Check every 10 seconds
+  });
+
+  return (
+    <Link href="/notifications">
+      <Bell />
+      {data?.count > 0 && (
+        <span className="badge">{data.count}</span>
+      )}
+    </Link>
+  );
+};
+```
+
+## Best practices
+
+<Steps>
+  <Step title="Don't spam">
+    Avoid creating duplicate notifications for the same action:
+
+    ```typescript
+    // Check if notification already exists
+    const existing = await db.notification.findFirst({
+      where: {
+        type: "LIKE",
+        senderUserId: liker.id,
+        postId: post.id,
+        receiverUserId: post.authorId
+      }
+    });
+
+    if (!existing) {
+      // Create new notification
+    }
+    ```
+  </Step>
+
+  <Step title="Clean up old notifications">
+    Periodically delete old read notifications:
+
+    ```typescript
+    // Delete notifications older than 30 days
+    await db.notification.deleteMany({
+      where: {
+        read: true,
+        createdAt: {
+          lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+        }
+      }
+    });
+    ```
+  </Step>
+
+  <Step title="Batch mark as read">
+    Mark all as read when user views notifications page, not individually.
+  </Step>
+
+  <Step title="Include context">
+    Link to relevant posts/profiles so users can quickly see what the notification is about.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Not receiving notifications">
+    **Check**:
+    1. Are you performing actions that trigger notifications?
+    2. Are notifications being created in the database?
+    3. Is the query filtering correctly?
+    4. Is auto-refresh working?
+  </Accordion>
+
+  <Accordion title="Duplicate notifications">
+    **Cause**: Action triggered multiple times
+
+    **Fix**: Add duplicate checks before creating notifications
+  </Accordion>
+
+  <Accordion title="Notifications not marking as read">
+    **Check**:
+    1. Is the update query running?
+    2. Are you using the correct user ID?
+    3. Is there a database error?
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Social features" icon="heart" href="/features/social">
+    Learn about actions that trigger notifications
+  </Card>
+  <Card title="Posts" icon="pencil" href="/features/posts">
+    Understand how post interactions work
+  </Card>
+  <Card title="Privacy" icon="shield" href="/features/privacy">
+    Control who can interact with your content
+  </Card>
+  <Card title="Admin tools" icon="user-gear" href="/security/content-moderation">
+    Create admin announcements
+  </Card>
+</CardGroup>

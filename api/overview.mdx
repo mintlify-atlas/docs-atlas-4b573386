@@ -1,0 +1,118 @@
+---
+title: API overview
+description: Learn about the Echo API, including base URL, authentication, and rate limiting
+---
+
+## Introduction
+
+The Echo API allows you to build integrations with the Echo platform. This anonymous micro-blogging platform is designed for college communities, enabling students to share posts, interact with content, and connect with peers.
+
+## Base URL
+
+All API endpoints are relative to your application base URL:
+
+```
+https://your-domain.com/api
+```
+
+## Authentication
+
+The Echo API uses NextAuth.js for session-based authentication. Most endpoints require an authenticated user session.
+
+### Session authentication
+
+Authentication is handled via HTTP-only cookies set by NextAuth.js. When you sign in through the web interface, a session token is automatically included in subsequent API requests.
+
+For programmatic access, you need to:
+
+1. Authenticate using the credentials provider
+2. Include the session cookie in your requests
+
+See the [Authentication](/api/authentication) page for detailed implementation.
+
+## Rate limiting
+
+The Echo API implements rate limiting to ensure fair usage and platform stability.
+
+### Rate limit tiers
+
+| Endpoint Category | Limit | Window |
+|------------------|-------|--------|
+| Post creation & replies | 27 requests | 1 minute |
+| Post interactions (like/dislike/repost) | 27 requests | 1 minute |
+| Profile & search | 100 requests | 1 minute |
+
+### Rate limit headers
+
+When you exceed the rate limit, the API returns a `429` status code with details:
+
+```json
+{
+  "error": "Rate limit exceeded",
+  "resetAt": "2026-02-28T12:34:56.789Z"
+}
+```
+
+## Response format
+
+All API responses are returned in JSON format.
+
+### Success response
+
+```json
+{
+  "id": "clx1234567890",
+  "text": "Hello Echo!",
+  "createdAt": "2026-02-28T12:00:00.000Z"
+}
+```
+
+### Error response
+
+```json
+{
+  "error": "Error message describing what went wrong"
+}
+```
+
+## Common error codes
+
+| Status Code | Description |
+|------------|-------------|
+| `400` | Bad Request - Invalid request data or missing required fields |
+| `401` | Unauthorized - Authentication required |
+| `403` | Forbidden - Insufficient permissions |
+| `404` | Not Found - Resource does not exist |
+| `422` | Unprocessable Entity - Invalid request data format |
+| `429` | Too Many Requests - Rate limit exceeded |
+| `500` | Internal Server Error - Server-side error occurred |
+
+## Data types
+
+### Privacy levels
+
+User privacy settings:
+- `PUBLIC` - Profile visible to all users
+- `PRIVATE` - Profile visible only to followers
+
+### Post privacy
+
+Post visibility settings:
+- `ANYONE` - Post visible to all users
+- `FOLLOWED` - Post visible only to followers
+- `MENTIONED` - Post visible only to mentioned users
+
+### Notification types
+
+- `LIKE` - Someone liked your post
+- `REPLY` - Someone replied to your post
+- `FOLLOW` - Someone followed you
+- `REPOST` - Someone reposted your post
+- `QUOTE` - Someone quoted your post
+- `ADMIN` - Administrative notification
+
+## Next steps
+
+- Learn about [Authentication](/api/authentication)
+- Explore [Post endpoints](/api/posts)
+- Discover [User endpoints](/api/users)

@@ -1,0 +1,576 @@
+---
+title: Posts
+description: Create, delete, and interact with posts on the Echo platform
+---
+
+## Create post
+
+`POST /api/post`
+
+Create a new post on the Echo platform. Posts can include text content, media attachments, and privacy settings.
+
+### Authentication
+
+Required. You must be authenticated to create posts.
+
+### Rate limiting
+
+27 requests per minute per user.
+
+### Request body
+
+<ParamField body="content" type="string" optional>
+  The text content of the post (max 500 characters)
+</ParamField>
+
+<ParamField body="media" type="array" optional>
+  Array of media URLs to attach to the post
+</ParamField>
+
+<ParamField body="privacy" type="string" required>
+  Post visibility setting. One of: `FOLLOWED`, `ANYONE`, `MENTIONED`
+</ParamField>
+
+<ParamField body="parentPostId" type="string" optional>
+  ID of the parent post if this is a reply
+</ParamField>
+
+<ParamField body="quoteId" type="string" optional>
+  ID of the post being quoted
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="string">
+  Unique post identifier
+</ResponseField>
+
+<ResponseField name="text" type="string">
+  The post content
+</ResponseField>
+
+<ResponseField name="media" type="array">
+  Array of media URLs
+</ResponseField>
+
+<ResponseField name="privacy" type="string">
+  Post privacy setting
+</ResponseField>
+
+<ResponseField name="authorId" type="string">
+  ID of the post author
+</ResponseField>
+
+<ResponseField name="author" type="object">
+  Author information
+  <Expandable title="properties">
+    <ResponseField name="username" type="string">
+      Author's username
+    </ResponseField>
+    <ResponseField name="college" type="object">
+      College information
+      <Expandable title="properties">
+        <ResponseField name="name" type="string">
+          College name
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp of post creation
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X POST 'https://your-domain.com/api/post' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN' \
+  -d '{
+    "content": "Hello Echo! This is my first post.",
+    "privacy": "ANYONE",
+    "media": []
+  }'
+```
+
+### Example response
+
+```json
+{
+  "id": "clx1234567890",
+  "text": "Hello Echo! This is my first post.",
+  "media": [],
+  "privacy": "ANYONE",
+  "authorId": "clx9876543210",
+  "author": {
+    "username": "john_doe",
+    "college": {
+      "name": "Stanford University"
+    }
+  },
+  "parentPostId": null,
+  "quoteId": null,
+  "createdAt": "2026-02-28T12:00:00.000Z"
+}
+```
+
+### Error responses
+
+<CodeGroup>
+```json 400 - Invalid request data
+{
+  "error": "Invalid request data"
+}
+```
+
+```json 401 - Unauthorized
+{
+  "error": "Unauthorized"
+}
+```
+
+```json 429 - Rate limit exceeded
+{
+  "error": "Rate limit exceeded",
+  "resetAt": "2026-02-28T12:34:56.789Z"
+}
+```
+</CodeGroup>
+
+---
+
+## Delete post
+
+`DELETE /api/post`
+
+Delete a post. You can only delete your own posts.
+
+### Authentication
+
+Required. You must be the post author to delete.
+
+### Rate limiting
+
+27 requests per minute per user.
+
+### Request body
+
+<ParamField body="postId" type="string" required>
+  ID of the post to delete
+</ParamField>
+
+### Response
+
+<ResponseField name="message" type="string">
+  Success message confirming deletion
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X DELETE 'https://your-domain.com/api/post' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN' \
+  -d '{
+    "postId": "clx1234567890"
+  }'
+```
+
+### Example response
+
+```json
+{
+  "message": "Post deleted successfully"
+}
+```
+
+### Error responses
+
+<CodeGroup>
+```json 401 - Unauthorized
+{
+  "error": "Authentication required"
+}
+```
+
+```json 403 - Forbidden
+{
+  "error": "Not authorized to delete this post"
+}
+```
+
+```json 404 - Not found
+{
+  "error": "Post not found"
+}
+```
+</CodeGroup>
+
+---
+
+## Create reply
+
+`POST /api/post/reply`
+
+Reply to an existing post.
+
+### Authentication
+
+Required. You must be authenticated to reply.
+
+### Rate limiting
+
+27 requests per minute per user.
+
+### Request body
+
+<ParamField body="text" type="string" required>
+  Reply text content (1-500 characters)
+</ParamField>
+
+<ParamField body="media" type="array" optional>
+  Array of media URLs to attach
+</ParamField>
+
+<ParamField body="parentPostId" type="string" required>
+  ID of the post being replied to
+</ParamField>
+
+<ParamField body="privacy" type="string" optional>
+  Reply visibility. Defaults to `ANYONE`
+</ParamField>
+
+### Response
+
+Returns the created reply post object (same structure as create post).
+
+### Example request
+
+```bash
+curl -X POST 'https://your-domain.com/api/post/reply' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN' \
+  -d '{
+    "text": "Great post! I totally agree.",
+    "parentPostId": "clx1234567890",
+    "privacy": "ANYONE"
+  }'
+```
+
+### Error responses
+
+<CodeGroup>
+```json 400 - Invalid request data
+{
+  "error": "Invalid request data"
+}
+```
+
+```json 404 - Parent post not found
+{
+  "error": "Parent post not found"
+}
+```
+</CodeGroup>
+
+---
+
+## Toggle like
+
+`POST /api/post/toggle/like`
+
+Like or unlike a post. If already liked, removes the like. If not liked, adds a like.
+
+### Authentication
+
+Required.
+
+### Request body
+
+<ParamField body="postId" type="string" required>
+  ID of the post to like/unlike
+</ParamField>
+
+### Response
+
+<ResponseField name="liked" type="boolean">
+  Whether the post is now liked by you
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X POST 'https://your-domain.com/api/post/toggle/like' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN' \
+  -d '{
+    "postId": "clx1234567890"
+  }'
+```
+
+### Example response
+
+```json
+{
+  "liked": true
+}
+```
+
+### Behavior
+
+- Automatically removes any existing dislike on the post
+- Creates a notification for the post author (unless liking your own post)
+- Removes notification when unliking
+
+---
+
+## Toggle dislike
+
+`POST /api/post/toggle/dislike`
+
+Dislike or remove dislike from a post.
+
+### Authentication
+
+Required.
+
+### Request body
+
+<ParamField body="postId" type="string" required>
+  ID of the post to dislike/undislike
+</ParamField>
+
+### Response
+
+<ResponseField name="disliked" type="boolean">
+  Whether the post is now disliked by you
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X POST 'https://your-domain.com/api/post/toggle/dislike' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN' \
+  -d '{
+    "postId": "clx1234567890"
+  }'
+```
+
+### Example response
+
+```json
+{
+  "disliked": true
+}
+```
+
+### Behavior
+
+- Automatically removes any existing like on the post
+- Creates a notification for the post author
+- Removes notification when undisliking
+
+---
+
+## Toggle repost
+
+`POST /api/post/toggle/repost`
+
+Repost or remove repost from a post.
+
+### Authentication
+
+Required.
+
+### Rate limiting
+
+27 requests per minute per user.
+
+### Request body
+
+<ParamField body="postId" type="string" required>
+  ID of the post to repost/unrepost
+</ParamField>
+
+### Response
+
+<ResponseField name="reposted" type="boolean">
+  Whether the post is now reposted by you
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X POST 'https://your-domain.com/api/post/toggle/repost' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN' \
+  -d '{
+    "postId": "clx1234567890"
+  }'
+```
+
+### Example response
+
+```json
+{
+  "reposted": true
+}
+```
+
+### Behavior
+
+- Creates a notification for the post author (unless reposting your own post)
+- Removes notification when unreposting
+
+---
+
+## Get posts feed
+
+`GET /api/posts`
+
+Retrieve the main feed of posts, including original posts and reposts.
+
+### Authentication
+
+Required.
+
+### Response
+
+Returns an array of post objects with interaction flags.
+
+<ResponseField name="posts" type="array">
+  Array of post objects
+  <Expandable title="Post object properties">
+    <ResponseField name="id" type="string">
+      Post identifier (or `repost-{postId}-{userId}` for reposts)
+    </ResponseField>
+    <ResponseField name="text" type="string">
+      Post content
+    </ResponseField>
+    <ResponseField name="media" type="array">
+      Array of media URLs
+    </ResponseField>
+    <ResponseField name="author" type="object">
+      Author information including username and college
+    </ResponseField>
+    <ResponseField name="_count" type="object">
+      Engagement counts (likes, dislikes, replies, reposts)
+    </ResponseField>
+    <ResponseField name="createdAt" type="string">
+      ISO 8601 timestamp
+    </ResponseField>
+    <ResponseField name="isLiked" type="boolean">
+      Whether you've liked this post
+    </ResponseField>
+    <ResponseField name="isDisliked" type="boolean">
+      Whether you've disliked this post
+    </ResponseField>
+    <ResponseField name="isReposted" type="boolean">
+      Whether you've reposted this post
+    </ResponseField>
+    <ResponseField name="isRepost" type="boolean">
+      Whether this is a repost
+    </ResponseField>
+    <ResponseField name="repostedBy" type="object" optional>
+      User who reposted (only present for reposts)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X GET 'https://your-domain.com/api/posts' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN'
+```
+
+### Behavior
+
+- Returns top 20 most recent posts and reposts
+- Only includes top-level posts (not replies)
+- Posts are sorted by creation date (descending)
+- Includes your interaction status with each post
+
+---
+
+## Get post thread
+
+`GET /api/post/[id]/thread`
+
+Retrieve a post and its conversation thread, including parent post and replies.
+
+### Authentication
+
+Required.
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  The post ID
+</ParamField>
+
+### Response
+
+<ResponseField name="post" type="object">
+  The main post object with all details
+  <Expandable title="properties">
+    <ResponseField name="parentPost" type="object" optional>
+      Parent post if this is a reply
+    </ResponseField>
+    <ResponseField name="isLiked" type="boolean">
+      Your like status
+    </ResponseField>
+    <ResponseField name="isDisliked" type="boolean">
+      Your dislike status
+    </ResponseField>
+    <ResponseField name="isReposted" type="boolean">
+      Your repost status
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="replies" type="array">
+  Array of reply post objects
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X GET 'https://your-domain.com/api/post/clx1234567890/thread' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN'
+```
+
+---
+
+## Get post replies
+
+`GET /api/post/[id]/replies`
+
+Retrieve all replies to a specific post.
+
+### Authentication
+
+Required.
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  The post ID
+</ParamField>
+
+### Response
+
+Returns an array of reply post objects, sorted by creation date (descending).
+
+### Example request
+
+```bash
+curl -X GET 'https://your-domain.com/api/post/clx1234567890/replies' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN'
+```

@@ -1,0 +1,533 @@
+---
+title: Users
+description: Manage user profiles, follows, and retrieve user content
+---
+
+## Follow/unfollow user
+
+`POST /api/follow`
+
+Follow or unfollow a user. This endpoint toggles the follow state.
+
+### Authentication
+
+Required.
+
+### Request body
+
+<ParamField body="username" type="string" required>
+  Username of the user to follow/unfollow
+</ParamField>
+
+### Response
+
+<ResponseField name="message" type="string">
+  Success message: `"Followed successfully"` or `"Unfollowed successfully"`
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X POST 'https://your-domain.com/api/follow' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN' \
+  -d '{
+    "username": "john_doe"
+  }'
+```
+
+### Example response
+
+```json
+{
+  "message": "Followed successfully"
+}
+```
+
+### Behavior
+
+- If already following: Unfollows the user
+- If not following: Follows the user and creates a notification
+- Cannot follow yourself (returns 400 error)
+
+### Error responses
+
+<CodeGroup>
+```json 400 - Cannot follow yourself
+{
+  "error": "Cannot follow yourself"
+}
+```
+
+```json 401 - Unauthorized
+{
+  "error": "Unauthorized"
+}
+```
+
+```json 404 - User not found
+{
+  "error": "User not found"
+}
+```
+
+```json 422 - Invalid request data
+{
+  "error": "Invalid request data"
+}
+```
+</CodeGroup>
+
+---
+
+## Check follow status
+
+`GET /api/follow/is`
+
+Check if you are following a specific user.
+
+### Authentication
+
+Required.
+
+### Query parameters
+
+<ParamField query="username" type="string" required>
+  Username to check follow status for
+</ParamField>
+
+### Response
+
+<ResponseField name="isFollowing" type="boolean">
+  Whether you are following the specified user
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X GET 'https://your-domain.com/api/follow/is?username=john_doe' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN'
+```
+
+### Example response
+
+```json
+{
+  "isFollowing": true
+}
+```
+
+### Error responses
+
+<CodeGroup>
+```json 400 - Username required
+{
+  "error": "Username is required"
+}
+```
+
+```json 401 - Unauthorized
+{
+  "error": "Unauthorized"
+}
+```
+</CodeGroup>
+
+---
+
+## Get user profile
+
+`GET /api/profile/[handle]`
+
+Retrieve public profile information for a user.
+
+### Rate limiting
+
+100 requests per minute per IP address.
+
+### Path parameters
+
+<ParamField path="handle" type="string" required>
+  The user's username handle
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="string">
+  User identifier
+</ResponseField>
+
+<ResponseField name="username" type="string">
+  Username handle
+</ResponseField>
+
+<ResponseField name="bio" type="string">
+  User biography
+</ResponseField>
+
+<ResponseField name="privacy" type="string">
+  Privacy setting (`PUBLIC` or `PRIVATE`)
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp of account creation
+</ResponseField>
+
+<ResponseField name="college" type="object">
+  College information
+  <Expandable title="properties">
+    <ResponseField name="name" type="string">
+      College name
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="_count" type="object">
+  Statistics
+  <Expandable title="properties">
+    <ResponseField name="followers" type="number">
+      Number of followers
+    </ResponseField>
+    <ResponseField name="following" type="number">
+      Number of users being followed
+    </ResponseField>
+    <ResponseField name="posts" type="number">
+      Number of posts
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X GET 'https://your-domain.com/api/profile/john_doe' \
+  -H 'Content-Type: application/json'
+```
+
+### Example response
+
+```json
+{
+  "id": "clx9876543210",
+  "username": "john_doe",
+  "bio": "Computer Science student at Stanford",
+  "privacy": "PUBLIC",
+  "createdAt": "2026-01-15T10:30:00.000Z",
+  "college": {
+    "name": "Stanford University"
+  },
+  "_count": {
+    "followers": 142,
+    "following": 89,
+    "posts": 56
+  }
+}
+```
+
+---
+
+## Edit user profile
+
+`PUT /api/profile/[handle]/edit`
+
+Update your profile information. You can only edit your own profile.
+
+### Authentication
+
+Required. Must be your own profile.
+
+### Rate limiting
+
+100 requests per minute per IP address.
+
+### Path parameters
+
+<ParamField path="handle" type="string" required>
+  Your username handle
+</ParamField>
+
+### Request body
+
+<ParamField body="username" type="string" optional>
+  New username (must be unique)
+</ParamField>
+
+<ParamField body="bio" type="string" optional>
+  New biography text
+</ParamField>
+
+<ParamField body="privacy" type="string" optional>
+  Privacy setting: `PUBLIC` or `PRIVATE`
+</ParamField>
+
+### Response
+
+Returns the updated user profile object.
+
+### Example request
+
+```bash
+curl -X PUT 'https://your-domain.com/api/profile/john_doe/edit' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN' \
+  -d '{
+    "bio": "CS student | Coffee enthusiast | Open source contributor",
+    "privacy": "PUBLIC"
+  }'
+```
+
+### Error responses
+
+<CodeGroup>
+```json 400 - Username taken
+{
+  "error": "Username already taken"
+}
+```
+
+```json 401 - Unauthorized
+{
+  "error": "Unauthorized"
+}
+```
+
+```json 403 - Cannot edit other profiles
+{
+  "error": "You can only edit your own profile"
+}
+```
+</CodeGroup>
+
+---
+
+## Get user posts
+
+`GET /api/profile/[handle]/posts`
+
+Retrieve all posts and reposts from a specific user.
+
+### Authentication
+
+Required.
+
+### Rate limiting
+
+100 requests per minute per IP address.
+
+### Path parameters
+
+<ParamField path="handle" type="string" required>
+  Username handle
+</ParamField>
+
+### Response
+
+Returns an array combining original posts and reposts, sorted by date (descending).
+
+<ResponseField name="posts" type="array">
+  Array of post objects
+  <Expandable title="Post properties">
+    <ResponseField name="isRepost" type="boolean">
+      Whether this is a repost
+    </ResponseField>
+    <ResponseField name="repostedBy" type="object" optional>
+      Repost metadata (only for reposts)
+      <Expandable title="properties">
+        <ResponseField name="id" type="string">
+          User ID
+        </ResponseField>
+        <ResponseField name="username" type="string">
+          Username
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="repostedAt" type="string" optional>
+      ISO 8601 timestamp of repost
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X GET 'https://your-domain.com/api/profile/john_doe/posts' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN'
+```
+
+### Behavior
+
+- Returns posts with privacy set to `ANYONE`
+- Includes your interaction status (liked, disliked, reposted)
+- Combines original posts and reposts in chronological order
+
+---
+
+## Get user replies
+
+`GET /api/profile/[handle]/replies`
+
+Retrieve all reply posts from a specific user.
+
+### Authentication
+
+Required.
+
+### Rate limiting
+
+100 requests per minute per IP address.
+
+### Path parameters
+
+<ParamField path="handle" type="string" required>
+  Username handle
+</ParamField>
+
+### Response
+
+Returns an array of reply posts (posts with a parent post).
+
+<ResponseField name="replies" type="array">
+  Array of reply post objects
+  <Expandable title="Reply properties">
+    <ResponseField name="parentPost" type="object">
+      The post being replied to
+      <Expandable title="properties">
+        <ResponseField name="id" type="string">
+          Parent post ID
+        </ResponseField>
+        <ResponseField name="text" type="string">
+          Parent post text
+        </ResponseField>
+        <ResponseField name="author" type="object">
+          Parent post author
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X GET 'https://your-domain.com/api/profile/john_doe/replies' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN'
+```
+
+---
+
+## Get user reposts
+
+`GET /api/profile/[handle]/reposts`
+
+Retrieve all reposts made by a specific user.
+
+### Authentication
+
+Required.
+
+### Rate limiting
+
+100 requests per minute per IP address.
+
+### Path parameters
+
+<ParamField path="handle" type="string" required>
+  Username handle
+</ParamField>
+
+### Response
+
+Returns an array of reposted post objects with interaction status.
+
+### Example request
+
+```bash
+curl -X GET 'https://your-domain.com/api/profile/john_doe/reposts' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN'
+```
+
+---
+
+## Report profile
+
+`POST /api/profile/report`
+
+Report a post for violating community guidelines.
+
+### Authentication
+
+Required.
+
+### Rate limiting
+
+100 requests per minute per IP address.
+
+### Request body
+
+<ParamField body="postId" type="string" required>
+  ID of the post to report
+</ParamField>
+
+<ParamField body="reason" type="string" required>
+  Reason for reporting the post
+</ParamField>
+
+### Response
+
+Returns the created report object.
+
+<ResponseField name="id" type="string">
+  Report identifier
+</ResponseField>
+
+<ResponseField name="reason" type="string">
+  Report reason
+</ResponseField>
+
+<ResponseField name="postId" type="string">
+  Reported post ID
+</ResponseField>
+
+<ResponseField name="userId" type="string">
+  ID of the user whose post was reported
+</ResponseField>
+
+<ResponseField name="reportedById" type="string">
+  Your user ID
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X POST 'https://your-domain.com/api/profile/report' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN' \
+  -d '{
+    "postId": "clx1234567890",
+    "reason": "Spam content"
+  }'
+```
+
+### Error responses
+
+<CodeGroup>
+```json 400 - Missing fields
+{
+  "error": "Reason is required"
+}
+```
+
+```json 404 - Post not found
+{
+  "error": "Post not found"
+}
+```
+</CodeGroup>

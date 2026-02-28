@@ -1,0 +1,552 @@
+---
+title: Deployment guide
+description: Deploy Echo to production with Vercel or your own infrastructure
+---
+
+## Overview
+
+Echo is built with Next.js 15 and can be deployed to Vercel, Docker, or any Node.js hosting platform. This guide covers the complete deployment process.
+
+## Prerequisites
+
+Before deploying, ensure you have:
+
+<CardGroup cols={2}>
+  <Card title="PostgreSQL database" icon="database">
+    A production PostgreSQL instance (Neon, Supabase, AWS RDS, etc.)
+  </Card>
+  <Card title="Redis instance" icon="server">
+    Upstash Redis for rate limiting
+  </Card>
+  <Card title="Blob storage" icon="box">
+    Vercel Blob or S3-compatible storage
+  </Card>
+  <Card title="Email service" icon="envelope">
+    Resend API key for email verification
+  </Card>
+</CardGroup>
+
+## Deploy to Vercel
+
+The fastest way to deploy Echo is using Vercel:
+
+<Steps>
+  <Step title="Connect your repository">
+    1. Push your Echo code to GitHub, GitLab, or Bitbucket
+    2. Go to [vercel.com](https://vercel.com)
+    3. Click **New Project**
+    4. Import your repository
+  </Step>
+
+  <Step title="Configure environment variables">
+    Add all required environment variables in the Vercel dashboard:
+
+    ```bash
+    # Database
+    DATABASE_URL="postgresql://user:pass@host:5432/echo"
+
+    # Authentication
+    NEXTAUTH_SECRET="your-nextauth-secret"
+    NEXTAUTH_URL="https://your-domain.vercel.app"
+    AUTH_SALT="your-auth-salt"
+
+    # Email
+    RESEND_API_KEY="re_..."
+
+    # Redis
+    UPSTASH_REDIS_REST_URL="https://..."
+    UPSTASH_REDIS_REST_TOKEN="..."
+
+    # Public URL
+    NEXT_PUBLIC_URL="https://your-domain.vercel.app"
+    ```
+
+    <Tip>
+      Generate secrets with: `openssl rand -base64 32`
+    </Tip>
+  </Step>
+
+  <Step title="Configure build settings">
+    Vercel auto-detects Next.js. Verify these settings:
+
+    - **Framework Preset**: Next.js
+    - **Build Command**: `bun run build` (or `npm run build`)
+    - **Output Directory**: `.next`
+    - **Install Command**: `bun install` (or `npm install`)
+  </Step>
+
+  <Step title="Run database migrations">
+    After deployment, run Prisma migrations:
+
+    ```bash
+    # From your local machine
+    DATABASE_URL="your-production-db-url" bunx prisma migrate deploy
+    ```
+
+    Or add to `package.json` build script:
+
+    ```json
+    {
+      "scripts": {
+        "build": "bun prisma:generate && prisma migrate deploy && next build"
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Deploy">
+    Click **Deploy**. Vercel will:
+
+    1. Install dependencies
+    2. Run the build command
+    3. Generate Prisma client
+    4. Build the Next.js app
+    5. Deploy to the edge
+
+    <Info>
+      First deployment takes 2-5 minutes. Subsequent deploys are faster.
+    </Info>
+  </Step>
+
+  <Step title="Verify deployment">
+    Test your deployment:
+
+    1. Visit your Vercel URL
+    2. Try signing up with a test email
+    3. Create a test post
+    4. Check database for records
+  </Step>
+</Steps>
+
+## Deploy with Docker
+
+For self-hosted deployments:
+
+<Steps>
+  <Step title="Create Dockerfile">
+    ```dockerfile Dockerfile
+    FROM oven/bun:1 AS base
+    WORKDIR /app
+
+    # Install dependencies
+    FROM base AS deps
+    COPY package.json bun.lockb ./
+    RUN bun install --frozen-lockfile
+
+    # Build application
+    FROM base AS builder
+    COPY --from=deps /app/node_modules ./node_modules
+    COPY . .
+
+    # Generate Prisma Client
+    RUN bunx prisma generate
+
+    # Build Next.js
+    ENV NEXT_TELEMETRY_DISABLED 1
+    RUN bun run build
+
+    # Production image
+    FROM base AS runner
+    WORKDIR /app
+
+    ENV NODE_ENV production
+    ENV NEXT_TELEMETRY_DISABLED 1
+
+    # Create non-root user
+    RUN addgroup --system --gid 1001 nodejs
+    RUN adduser --system --uid 1001 nextjs
+
+    # Copy built application
+    COPY --from=builder /app/public ./public
+    COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+    COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+    COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+
+    USER nextjs
+
+    EXPOSE 3000
+
+    ENV PORT 3000
+    ENV HOSTNAME "0.0.0.0"
+
+    CMD ["bun", "server.js"]
+    ```
+  </Step>
+
+  <Step title="Update next.config.js">
+    Enable standalone output:
+
+    ```javascript next.config.js
+    /** @type {import('next').NextConfig} */
+    const nextConfig = {
+      output: 'standalone',
+      experimental: {
+        serverActions: {
+          bodySizeLimit: '10mb',
+        },
+      },
+    };
+
+    module.exports = nextConfig;
+    ```
+  </Step>
+
+  <Step title="Create docker-compose.yml">
+    ```yaml docker-compose.yml
+    version: '3.8'
+
+    services:
+      app:
+        build: .
+        ports:
+          - "3000:3000"
+        environment:
+          - DATABASE_URL=${DATABASE_URL}
+          - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+          - NEXTAUTH_URL=${NEXTAUTH_URL}
+          - AUTH_SALT=${AUTH_SALT}
+          - RESEND_API_KEY=${RESEND_API_KEY}
+          - UPSTASH_REDIS_REST_URL=${UPSTASH_REDIS_REST_URL}
+          - UPSTASH_REDIS_REST_TOKEN=${UPSTASH_REDIS_REST_TOKEN}
+          - NEXT_PUBLIC_URL=${NEXT_PUBLIC_URL}
+        depends_on:
+          - db
+
+      db:
+        image: postgres:16-alpine
+        environment:
+          - POSTGRES_USER=echo
+          - POSTGRES_PASSWORD=your_password
+          - POSTGRES_DB=echo
+        volumes:
+          - postgres_data:/var/lib/postgresql/data
+        ports:
+          - "5432:5432"
+
+    volumes:
+      postgres_data:
+    ```
+  </Step>
+
+  <Step title="Build and run">
+    ```bash
+    # Build the image
+    docker-compose build
+
+    # Run migrations
+    docker-compose run app bunx prisma migrate deploy
+
+    # Start the application
+    docker-compose up -d
+    ```
+  </Step>
+</Steps>
+
+## Deploy to other platforms
+
+<Tabs>
+  <Tab title="Netlify">
+    ```toml netlify.toml
+    [build]
+      command = "bun run build"
+      publish = ".next"
+
+    [[plugins]]
+      package = "@netlify/plugin-nextjs"
+    ```
+
+    Environment variables are configured in Netlify dashboard.
+  </Tab>
+
+  <Tab title="Railway">
+    Railway auto-detects Next.js:
+
+    1. Connect your GitHub repo
+    2. Add environment variables
+    3. Railway handles the rest
+
+    ```bash
+    # Railway CLI
+    railway login
+    railway init
+    railway up
+    ```
+  </Tab>
+
+  <Tab title="DigitalOcean App Platform">
+    Create `app.yaml`:
+
+    ```yaml
+    name: echo
+    services:
+      - name: web
+        github:
+          repo: your-username/echo
+          branch: main
+        build_command: bun run build
+        run_command: bun start
+        envs:
+          - key: DATABASE_URL
+            value: ${db.DATABASE_URL}
+    databases:
+      - name: db
+        engine: PG
+    ```
+  </Tab>
+
+  <Tab title="AWS">
+    Deploy to AWS Elastic Beanstalk:
+
+    1. Install EB CLI: `pip install awsebcli`
+    2. Initialize: `eb init`
+    3. Create environment: `eb create production`
+    4. Set env vars: `eb setenv KEY=value`
+    5. Deploy: `eb deploy`
+  </Tab>
+</Tabs>
+
+## Post-deployment tasks
+
+<Steps>
+  <Step title="Seed colleges">
+    Add your first college to the database:
+
+    ```typescript
+    // Use Prisma Studio or seed script
+    await db.college.create({
+      data: {
+        name: "University Name",
+        domain: "college.edu"
+      }
+    });
+    ```
+
+    Or via API:
+    ```bash
+    curl -X POST https://your-domain.com/api/seed/colleges \
+      -H "Content-Type: application/json" \
+      -d '{"name": "University Name", "domain": "college.edu"}'
+    ```
+  </Step>
+
+  <Step title="Create admin account">
+    Manually set a user as admin in the database:
+
+    ```sql
+    UPDATE "User" SET "is_admin" = true WHERE username = 'admin_username';
+    ```
+  </Step>
+
+  <Step title="Configure custom domain">
+    In Vercel:
+
+    1. Go to Project Settings → Domains
+    2. Add your custom domain
+    3. Configure DNS records
+    4. Update `NEXTAUTH_URL` and `NEXT_PUBLIC_URL`
+  </Step>
+
+  <Step title="Set up monitoring">
+    Monitor your deployment:
+
+    - **Vercel Analytics**: Built-in
+    - **Sentry**: Error tracking
+    - **LogRocket**: Session replay
+    - **Uptime monitoring**: UptimeRobot, Pingdom
+  </Step>
+
+  <Step title="Enable backups">
+    Configure database backups:
+
+    ```bash
+    # PostgreSQL backup
+    pg_dump $DATABASE_URL > backup-$(date +%Y%m%d).sql
+
+    # Automate with cron
+    0 2 * * * pg_dump $DATABASE_URL > /backups/echo-$(date +\%Y\%m\%d).sql
+    ```
+  </Step>
+</Steps>
+
+## Performance optimization
+
+<Accordion title="Enable caching">
+  ```typescript
+  // Cache database queries
+  const posts = await unstable_cache(
+    async () => db.post.findMany({ /* ... */ }),
+    ['posts'],
+    { revalidate: 60 } // 1 minute
+  )();
+  ```
+</Accordion>
+
+<Accordion title="Optimize images">
+  ```typescript
+  // next.config.js
+  module.exports = {
+    images: {
+      domains: ['blob.vercel-storage.com'],
+      formats: ['image/avif', 'image/webp'],
+      minimumCacheTTL: 60,
+    },
+  };
+  ```
+</Accordion>
+
+<Accordion title="Database connection pooling">
+  ```typescript
+  // lib/db.ts
+  import { PrismaClient } from '@prisma/client';
+
+  const globalForPrisma = global as unknown as { prisma: PrismaClient };
+
+  export const db = globalForPrisma.prisma || new PrismaClient({
+    log: process.env.NODE_ENV === 'development' ? ['query'] : [],
+  });
+
+  if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
+  ```
+</Accordion>
+
+<Accordion title="Enable compression">
+  Vercel enables this by default. For custom servers:
+
+  ```javascript
+  // server.js
+  const compression = require('compression');
+  app.use(compression());
+  ```
+</Accordion>
+
+## Security checklist
+
+<Steps>
+  <Step title="Environment variables">
+    - ✅ Never commit `.env` files
+    - ✅ Use strong, unique secrets
+    - ✅ Rotate secrets regularly
+    - ✅ Limit access to production secrets
+  </Step>
+
+  <Step title="Database security">
+    - ✅ Enable SSL for database connections
+    - ✅ Use connection pooling
+    - ✅ Restrict database access by IP
+    - ✅ Use least-privilege database users
+  </Step>
+
+  <Step title="Application security">
+    - ✅ Enable HTTPS only
+    - ✅ Set security headers
+    - ✅ Enable CORS restrictions
+    - ✅ Implement rate limiting
+    - ✅ Validate all inputs
+  </Step>
+
+  <Step title="Monitoring">
+    - ✅ Set up error tracking
+    - ✅ Monitor API usage
+    - ✅ Track failed login attempts
+    - ✅ Set up alerts for anomalies
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Build fails">
+    **Common issues**:
+
+    1. Missing environment variables
+    2. Prisma client not generated
+    3. Type errors in code
+    4. Dependency version conflicts
+
+    **Fix**:
+    ```bash
+    # Regenerate Prisma client
+    bunx prisma generate
+
+    # Check types
+    bun run check-types
+
+    # Clear cache
+    rm -rf .next node_modules
+    bun install
+    ```
+  </Accordion>
+
+  <Accordion title="Database connection fails">
+    **Check**:
+
+    1. Is `DATABASE_URL` correct?
+    2. Is the database accessible from deployment?
+    3. Are connection pool limits reached?
+    4. Is SSL required but not configured?
+
+    **Test connection**:
+    ```bash
+    DATABASE_URL="your-url" bunx prisma db pull
+    ```
+  </Accordion>
+
+  <Accordion title="Rate limiting errors">
+    **Cause**: Upstash Redis not configured
+
+    **Fix**:
+    1. Create Upstash Redis database
+    2. Add `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`
+    3. Redeploy
+  </Accordion>
+
+  <Accordion title="Email verification not working">
+    **Check**:
+
+    1. Is `RESEND_API_KEY` set?
+    2. Is domain verified in Resend?
+    3. Are emails being blocked by spam filters?
+
+    **Test**:
+    ```bash
+    curl -X POST https://api.resend.com/emails \
+      -H "Authorization: Bearer $RESEND_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"from":"noreply@yourdomain.com","to":"test@example.com","subject":"Test","html":"<p>Test</p>"}'
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Scaling considerations
+
+<CardGroup cols={2}>
+  <Card title="Horizontal scaling" icon="arrows-left-right">
+    Vercel auto-scales. For custom deployments, use load balancers and multiple instances.
+  </Card>
+  <Card title="Database scaling" icon="database">
+    Use read replicas, connection pooling (PgBouncer), and database sharding for large scale.
+  </Card>
+  <Card title="Caching" icon="bolt">
+    Implement Redis caching for frequently accessed data to reduce database load.
+  </Card>
+  <Card title="CDN" icon="globe">
+    Use Vercel Edge Network or CloudFlare for static assets and edge caching.
+  </Card>
+</CardGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Environment variables" icon="gear" href="/deployment/environment">
+    Complete guide to all environment variables
+  </Card>
+  <Card title="Database setup" icon="database" href="/deployment/database">
+    PostgreSQL and Prisma configuration
+  </Card>
+  <Card title="Security" icon="shield" href="/security/authentication">
+    Secure your deployment
+  </Card>
+  <Card title="Rate limiting" icon="gauge" href="/security/rate-limiting">
+    Configure rate limits
+  </Card>
+</CardGroup>

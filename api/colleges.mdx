@@ -1,0 +1,145 @@
+---
+title: Colleges
+description: Retrieve college information and associated users
+---
+
+## Get college by ID
+
+`GET /api/college/[id]`
+
+Retrieve detailed information about a college, including its users.
+
+### Rate limiting
+
+100 requests per minute per IP address.
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  The college identifier
+</ParamField>
+
+### Response
+
+<ResponseField name="college" type="string">
+  Name of the college
+</ResponseField>
+
+<ResponseField name="users" type="array">
+  Array of public user profiles from this college
+  <Expandable title="User object properties">
+    <ResponseField name="username" type="string">
+      User's username handle
+    </ResponseField>
+    <ResponseField name="bio" type="string">
+      User biography
+    </ResponseField>
+    <ResponseField name="privacy" type="string">
+      Always `PUBLIC` (private profiles are filtered out)
+    </ResponseField>
+    <ResponseField name="college" type="object">
+      College information
+      <Expandable title="properties">
+        <ResponseField name="name" type="string">
+          College name
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X GET 'https://your-domain.com/api/college/clx1234567890' \
+  -H 'Content-Type: application/json'
+```
+
+### Example response
+
+```json
+{
+  "college": "Stanford University",
+  "users": [
+    {
+      "username": "john_doe",
+      "bio": "Computer Science student",
+      "privacy": "PUBLIC",
+      "college": {
+        "name": "Stanford University"
+      }
+    },
+    {
+      "username": "jane_smith",
+      "bio": "Engineering major",
+      "privacy": "PUBLIC",
+      "college": {
+        "name": "Stanford University"
+      }
+    }
+  ]
+}
+```
+
+### Behavior
+
+- Only returns users with `PUBLIC` privacy setting
+- Private profiles are automatically filtered out
+- Users are returned without any specific ordering
+
+### Error responses
+
+<CodeGroup>
+```json 404 - College not found
+{
+  "error": "College not found"
+}
+```
+
+```json 429 - Rate limit exceeded
+{
+  "error": "Too many requests"
+}
+```
+
+```json 500 - Server error
+{
+  "error": "Failed to fetch college users"
+}
+```
+</CodeGroup>
+
+## College data structure
+
+Colleges in the Echo platform have the following attributes:
+
+- **ID**: Unique identifier (CUID format)
+- **Name**: Full college name
+- **Domain**: Email domain for college verification (e.g., `stanford.edu`)
+- **Created At**: Timestamp of college registration
+- **Updated At**: Timestamp of last update
+
+## Use cases
+
+### Discover users from your college
+
+Use this endpoint to find other students from your college:
+
+```javascript
+const response = await fetch(`/api/college/${collegeId}`);
+const { users } = await response.json();
+```
+
+### Build college directories
+
+Create a directory page showing all public users from a specific college:
+
+```javascript
+const { college, users } = await fetch(`/api/college/${id}`).then(r => r.json());
+
+console.log(`${college} has ${users.length} public profiles`);
+```
+
+### Verify college affiliation
+
+Confirm that a user belongs to a specific college by checking the users array.

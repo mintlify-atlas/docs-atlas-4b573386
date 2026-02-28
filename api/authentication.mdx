@@ -1,0 +1,145 @@
+---
+title: Authentication
+description: Learn how to authenticate with the Echo API using NextAuth session authentication
+---
+
+## Overview
+
+The Echo API uses NextAuth.js with a credentials provider for authentication. Sessions are managed using JWT tokens stored in HTTP-only cookies.
+
+## Authentication flow
+
+1. User provides email and password credentials
+2. Server validates credentials and generates a user hash
+3. Server creates a JWT session token (valid for 30 days)
+4. Session token is stored in an HTTP-only cookie
+5. Subsequent requests automatically include the session cookie
+
+## Session configuration
+
+- **Strategy**: JWT
+- **Max Age**: 30 days
+- **Update Age**: 24 hours
+- **Token Storage**: HTTP-only cookies
+
+## Checking authentication
+
+Most API endpoints check for an authenticated session using `getServerSession()`:
+
+```typescript
+const session = await getServerSession(config);
+if (!session?.user) {
+  return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+}
+```
+
+## Session user object
+
+When authenticated, the session contains a user object with:
+
+<ResponseField name="id" type="string" required>
+  Unique user identifier
+</ResponseField>
+
+<ResponseField name="username" type="string" required>
+  User's username handle
+</ResponseField>
+
+<ResponseField name="college" type="string" required>
+  Name of the user's college
+</ResponseField>
+
+<ResponseField name="isAdmin" type="boolean" required>
+  Whether the user has admin privileges
+</ResponseField>
+
+## Making authenticated requests
+
+### Using fetch with credentials
+
+```javascript
+fetch('https://your-domain.com/api/posts', {
+  method: 'GET',
+  credentials: 'include', // Include cookies
+  headers: {
+    'Content-Type': 'application/json'
+  }
+})
+```
+
+### Using curl with cookies
+
+```bash
+curl -X GET 'https://your-domain.com/api/posts' \
+  -H 'Content-Type: application/json' \
+  -b 'next-auth.session-token=YOUR_SESSION_TOKEN'
+```
+
+## Authentication errors
+
+### 401 Unauthorized
+
+Returned when no valid session is present:
+
+```json
+{
+  "error": "Unauthorized"
+}
+```
+
+### 403 Forbidden
+
+Returned when you lack permission for the requested action:
+
+```json
+{
+  "error": "Not authorized to delete this post"
+}
+```
+
+## User hash generation
+
+Echo uses a unique approach to user identification. Instead of storing passwords, it generates a hash from the email and password combination:
+
+```typescript
+const userHash = generateUserHash(email, password);
+```
+
+This hash serves as the unique identifier for authentication. Users are matched in the database using this hash, providing password-less verification while maintaining security.
+
+## Validation
+
+Credentials are validated before authentication:
+
+- **Email**: Must be a valid email format
+- **Password**: Must meet minimum security requirements
+
+## Session updates
+
+Sessions automatically refresh every 24 hours when the user is active. You can manually trigger a session update when user data changes (e.g., username update):
+
+```typescript
+await update({
+  user: {
+    username: newUsername
+  }
+});
+```
+
+## Sign out
+
+To end a session, redirect users to:
+
+```
+GET /auth/logout
+```
+
+This clears the session cookie and invalidates the JWT token.
+
+## Security considerations
+
+- Session tokens are stored in HTTP-only cookies (not accessible via JavaScript)
+- Tokens expire after 30 days of inactivity
+- All authentication logic runs server-side
+- User hashes are unique per email/password combination
+- Rate limiting prevents brute force attacks

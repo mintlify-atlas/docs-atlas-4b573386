@@ -1,0 +1,602 @@
+---
+title: Rate limiting
+description: Protect Echo from abuse with Upstash Redis rate limiting
+---
+
+## Overview
+
+Echo uses Upstash Redis with the `@upstash/ratelimit` library to prevent abuse, spam, and denial-of-service attacks. Rate limits are applied across various endpoints to ensure fair usage.
+
+## Rate limiting architecture
+
+<Steps>
+  <Step title="Upstash Redis">
+    Upstash provides serverless Redis for rate limit counters:
+
+    ```typescript
+    import { Redis } from '@upstash/redis';
+
+    const redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL!,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+    });
+    ```
+
+    **Benefits**:
+    - Serverless: No infrastructure to manage
+    - Fast: Low-latency globally
+    - Scalable: Handles high traffic
+    - Affordable: Generous free tier
+  </Step>
+
+  <Step title="Rate limiter configuration">
+    ```typescript
+    import { Ratelimit } from '@upstash/ratelimit';
+
+    const ratelimit = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(27, '1 m'),
+      analytics: true,
+      prefix: 'echo',
+    });
+    ```
+
+    **Parameters**:
+    - `27`: Maximum requests
+    - `'1 m'`: Time window (1 minute)
+    - `slidingWindow`: Algorithm type
+    - `analytics`: Track usage patterns
+  </Step>
+
+  <Step title="Apply to endpoints">
+    ```typescript
+    export async function POST(req: Request) {
+      const session = await getServerSession(config);
+      if (!session?.user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+
+      // Check rate limit
+      const { success, reset } = await ratelimit.limit(session.user.id);
+
+      if (!success) {
+        return NextResponse.json(
+          {
+            error: 'Rate limit exceeded',
+            resetAt: new Date(reset).toISOString(),
+          },
+          { status: 429 }
+        );
+      }
+
+      // Process request
+      // ...
+    }
+    ```
+  </Step>
+</Steps>
+
+## Rate limit algorithms
+
+Upstash supports multiple algorithms:
+
+<Tabs>
+  <Tab title="Sliding Window">
+    ```typescript
+    Ratelimit.slidingWindow(10, '10 s')
+    ```
+
+    **How it works**:
+    - Tracks requests in a rolling time window
+    - More accurate than fixed window
+    - Prevents burst at window boundaries
+
+    **Example**: 10 requests per 10 seconds
+    - Request at 0s: 1/10 ✅
+    - Request at 5s: 2/10 ✅
+    - Request at 8s: 3/10 ✅
+    - Request at 12s: Still counts request from 5s = 3/10 ✅
+    - Request at 16s: Request from 8s counted = 2/10 ✅
+
+    <Tip>
+      Recommended for most use cases. Best balance of accuracy and performance.
+    </Tip>
+  </Tab>
+
+  <Tab title="Fixed Window">
+    ```typescript
+    Ratelimit.fixedWindow(10, '10 s')
+    ```
+
+    **How it works**:
+    - Resets counter at fixed intervals
+    - Simpler but less accurate
+    - Can allow bursts at boundaries
+
+    **Example**: 10 requests per 10 seconds
+    - Window 1 (0-10s): 10 requests ✅
+    - Window 2 (10-20s): 10 more requests ✅
+    - At 9s: 10 requests, at 11s: 10 more = 20 in 2 seconds ⚠️
+
+    **Use when**: Performance is critical, bursts are acceptable
+  </Tab>
+
+  <Tab title="Token Bucket">
+    ```typescript
+    Ratelimit.tokenBucket(10, '10 s', 10)
+    ```
+
+    **How it works**:
+    - Bucket starts with tokens
+    - Each request consumes a token
+    - Tokens refill over time
+    - Allows bursts up to bucket size
+
+    **Parameters**:
+    - `10`: Refill rate (tokens per interval)
+    - `'10 s'`: Refill interval
+    - `10`: Bucket size (max tokens)
+
+    **Use when**: You want to allow controlled bursts
+  </Tab>
+</Tabs>
+
+## Echo's rate limits
+
+Echo applies different limits to different operations:
+
+<Tabs>
+  <Tab title="Post creation">
+    ```typescript app/api/post/route.ts
+    const ratelimit = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(27, '1 m'),
+    });
+
+    export async function POST(req: Request) {
+      const session = await getServerSession(config);
+      const { success, reset } = await ratelimit.limit(session.user.id);
+
+      if (!success) {
+        return NextResponse.json(
+          {
+            error: 'Rate limit exceeded',
+            resetAt: new Date(reset).toISOString(),
+          },
+          { status: 429 }
+        );
+      }
+
+      // Create post
+      // ...
+    }
+    ```
+
+    **Limit**: 27 posts per minute
+
+    **Rationale**: Prevents spam while allowing active users to post normally
+  </Tab>
+
+  <Tab title="Media uploads">
+    ```typescript app/api/upload/route.ts
+    const ratelimit = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(27, '1 m'),
+    });
+
+    export async function POST(request: Request) {
+      const session = await getServerSession(config);
+      const { success, reset } = await ratelimit.limit(session.user.id);
+
+      if (!success) {
+        return NextResponse.json(
+          { error: 'Rate limit exceeded', resetAt: new Date(reset).toISOString() },
+          { status: 429 }
+        );
+      }
+
+      // Upload file
+      // ...
+    }
+    ```
+
+    **Limit**: 27 uploads per minute
+
+    **Rationale**: Matches post creation limit
+  </Tab>
+
+  <Tab title="Reports">
+    ```typescript app/api/profile/report/route.ts
+    const ratelimit = new Ratelimit({
+      redis: Redis.fromEnv(),
+      limiter: Ratelimit.slidingWindow(100, '1 m'),
+    });
+
+    export async function POST(req: NextRequest) {
+      const ip = ipAddress(req) ?? '127.0.0.1';
+      const { success } = await ratelimit.limit(ip);
+
+      if (!success) {
+        return NextResponse.json(
+          { error: 'Too many requests' },
+          { status: 429 }
+        );
+      }
+
+      // Create report
+      // ...
+    }
+    ```
+
+    **Limit**: 100 reports per minute (by IP)
+
+    **Rationale**: Higher limit for legitimate reports, IP-based to prevent abuse from multiple accounts
+  </Tab>
+
+  <Tab title="Authentication">
+    ```typescript
+    // Login attempts
+    const loginRatelimit = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(5, '15 m'),
+    });
+
+    // Email verification
+    const verifyRatelimit = new Ratelimit({
+      redis,
+      limiter: Ratelimit.fixedWindow(3, '1 h'),
+    });
+    ```
+
+    **Limits**:
+    - Login: 5 attempts per 15 minutes
+    - Verification: 3 codes per hour
+
+    **Rationale**: Prevent brute force attacks
+  </Tab>
+</Tabs>
+
+## Implementation patterns
+
+<CodeGroup>
+```typescript User-based Rate Limiting
+// Limit by authenticated user ID
+const { success, reset } = await ratelimit.limit(session.user.id);
+
+if (!success) {
+  return NextResponse.json(
+    {
+      error: 'Rate limit exceeded',
+      resetAt: new Date(reset).toISOString(),
+    },
+    { status: 429 }
+  );
+}
+```
+
+```typescript IP-based Rate Limiting
+import { ipAddress } from '@vercel/functions';
+
+// Limit by IP address (for unauthenticated requests)
+const ip = ipAddress(req) ?? '127.0.0.1';
+const { success } = await ratelimit.limit(ip);
+
+if (!success) {
+  return NextResponse.json(
+    { error: 'Too many requests from this IP' },
+    { status: 429 }
+  );
+}
+```
+
+```typescript Composite Keys
+// Limit by combination of factors
+const key = `${session.user.id}:${action}`;
+const { success } = await ratelimit.limit(key);
+
+// Example: Different limits for different actions
+const postLimit = await ratelimit.limit(`${userId}:post`);
+const likeLimit = await ratelimit.limit(`${userId}:like`);
+```
+
+```typescript Multiple Rate Limiters
+// Different limits for different tiers
+const freeUserLimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(10, '1 m'),
+});
+
+const premiumUserLimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(100, '1 m'),
+});
+
+const limit = user.isPremium ? premiumUserLimit : freeUserLimit;
+const { success } = await limit.limit(user.id);
+```
+</CodeGroup>
+
+## Response headers
+
+Include rate limit info in responses:
+
+```typescript
+const { success, limit, remaining, reset } = await ratelimit.limit(userId);
+
+const headers = new Headers();
+headers.set('X-RateLimit-Limit', limit.toString());
+headers.set('X-RateLimit-Remaining', remaining.toString());
+headers.set('X-RateLimit-Reset', reset.toString());
+
+if (!success) {
+  return new NextResponse(
+    JSON.stringify({ error: 'Rate limit exceeded' }),
+    {
+      status: 429,
+      headers,
+    }
+  );
+}
+
+return new NextResponse(JSON.stringify(data), {
+  status: 200,
+  headers,
+});
+```
+
+**Client can check**:
+```typescript
+const response = await fetch('/api/post', { method: 'POST', ... });
+
+const limit = response.headers.get('X-RateLimit-Limit');
+const remaining = response.headers.get('X-RateLimit-Remaining');
+const reset = response.headers.get('X-RateLimit-Reset');
+
+if (response.status === 429) {
+  const resetDate = new Date(parseInt(reset!) * 1000);
+  toast.error(`Rate limit exceeded. Try again at ${resetDate.toLocaleTimeString()}`);
+}
+```
+
+## Client-side handling
+
+<Tabs>
+  <Tab title="Show retry time">
+    ```typescript
+    const handlePost = async () => {
+      try {
+        const response = await fetch('/api/post', {
+          method: 'POST',
+          body: JSON.stringify(data),
+        });
+
+        if (response.status === 429) {
+          const { resetAt } = await response.json();
+          const resetDate = new Date(resetAt);
+          const seconds = Math.ceil((resetDate.getTime() - Date.now()) / 1000);
+
+          toast.error(`Rate limit exceeded. Try again in ${seconds} seconds.`);
+          return;
+        }
+
+        // Success
+        toast.success('Posted!');
+      } catch (error) {
+        toast.error('Failed to post');
+      }
+    };
+    ```
+  </Tab>
+
+  <Tab title="Disable UI">
+    ```typescript
+    const [isRateLimited, setIsRateLimited] = useState(false);
+    const [resetAt, setResetAt] = useState<Date | null>(null);
+
+    useEffect(() => {
+      if (!resetAt) return;
+
+      const interval = setInterval(() => {
+        if (Date.now() >= resetAt.getTime()) {
+          setIsRateLimited(false);
+          setResetAt(null);
+        }
+      }, 1000);
+
+      return () => clearInterval(interval);
+    }, [resetAt]);
+
+    const handlePost = async () => {
+      const response = await fetch('/api/post', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+
+      if (response.status === 429) {
+        const { resetAt } = await response.json();
+        setIsRateLimited(true);
+        setResetAt(new Date(resetAt));
+      }
+    };
+
+    return (
+      <Button onClick={handlePost} disabled={isRateLimited}>
+        {isRateLimited ? 'Rate limited' : 'Post'}
+      </Button>
+    );
+    ```
+  </Tab>
+
+  <Tab title="Exponential backoff">
+    ```typescript
+    const postWithRetry = async (
+      data: PostData,
+      maxRetries = 3
+    ): Promise<Response> => {
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        const response = await fetch('/api/post', {
+          method: 'POST',
+          body: JSON.stringify(data),
+        });
+
+        if (response.status !== 429) {
+          return response;
+        }
+
+        // Exponential backoff
+        const delay = Math.pow(2, attempt) * 1000;
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+
+      throw new Error('Max retries exceeded');
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Analytics and monitoring
+
+Track rate limit hits:
+
+```typescript
+const ratelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(27, '1 m'),
+  analytics: true, // Enable analytics
+});
+
+// View analytics in Upstash dashboard
+// Or query programmatically:
+const analytics = await ratelimit.getRemaining(userId);
+```
+
+**Monitor**:
+- Rate limit hit frequency
+- Which endpoints are limited most
+- User patterns (legitimate vs abuse)
+- Adjust limits based on data
+
+## Adjusting rate limits
+
+Tune limits based on your needs:
+
+<Accordion title="Higher traffic apps">
+  ```typescript
+  // Increase limits for high-traffic periods
+  const ratelimit = new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(100, '1 m'), // Was 27
+  });
+  ```
+</Accordion>
+
+<Accordion title="Stricter moderation">
+  ```typescript
+  // Decrease limits to prevent spam
+  const ratelimit = new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(10, '1 m'), // Was 27
+  });
+  ```
+</Accordion>
+
+<Accordion title="Per-user limits">
+  ```typescript
+  // Different limits for different user types
+  const getUserLimit = (user: User) => {
+    if (user.isAdmin) {
+      return new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(1000, '1 m'),
+      });
+    }
+
+    if (user.reputation > 100) {
+      return new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(50, '1 m'),
+      });
+    }
+
+    return new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(27, '1 m'),
+    });
+  };
+  ```
+</Accordion>
+
+## Best practices
+
+<CardGroup cols={2}>
+  <Card title="Be generous" icon="hand-holding-heart">
+    Set limits high enough for normal usage. Only restrict abuse.
+  </Card>
+  <Card title="Communicate clearly" icon="message">
+    Return helpful error messages with reset times.
+  </Card>
+  <Card title="Monitor and adjust" icon="chart-line">
+    Track analytics and tune limits based on actual usage.
+  </Card>
+  <Card title="Use appropriate keys" icon="key">
+    User ID for authenticated, IP for anonymous, combination for specific actions.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Redis connection fails">
+    ```
+    Error: Failed to connect to Redis
+    ```
+
+    **Check**:
+    1. `UPSTASH_REDIS_REST_URL` is set correctly
+    2. `UPSTASH_REDIS_REST_TOKEN` is valid
+    3. Upstash Redis instance is active
+    4. No firewall blocking requests
+  </Accordion>
+
+  <Accordion title="Users hitting limits unexpectedly">
+    **Investigate**:
+    1. Check if limit is too low
+    2. Look for client-side bugs (duplicate requests)
+    3. Verify rate limit key is correct
+    4. Check Redis analytics for patterns
+
+    **Temporary fix**: Increase limit or whitelist user
+  </Accordion>
+
+  <Accordion title="Rate limits not working">
+    **Debug**:
+    ```typescript
+    const result = await ratelimit.limit(userId);
+    console.log('Rate limit result:', {
+      success: result.success,
+      limit: result.limit,
+      remaining: result.remaining,
+      reset: new Date(result.reset),
+    });
+    ```
+
+    Verify the limit is being checked and enforced.
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="lock" href="/security/authentication">
+    Secure authentication system
+  </Card>
+  <Card title="Content moderation" icon="shield-check" href="/security/content-moderation">
+    NSFW detection and reporting
+  </Card>
+  <Card title="Environment setup" icon="gear" href="/deployment/environment">
+    Configure Upstash Redis credentials
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/deployment/setup">
+    Deploy with rate limiting enabled
+  </Card>
+</CardGroup>

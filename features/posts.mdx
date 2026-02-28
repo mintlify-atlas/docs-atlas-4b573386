@@ -1,0 +1,420 @@
+---
+title: Posts
+description: Create, reply to, and delete posts on Echo
+---
+
+## Overview
+
+Posts are the core of Echo's social experience. You can share text, images, and thoughts with your college community while maintaining anonymity.
+
+## Creating posts
+
+Echo provides a flexible posting system with multiple privacy options and media support.
+
+<Steps>
+  <Step title="Compose your post">
+    Click the compose button to open the post editor. Add your text content:
+
+    ```typescript
+    const postData = {
+      content: "Your post text here",
+      media: [],
+      privacy: "ANYONE"
+    };
+    ```
+  </Step>
+
+  <Step title="Add media (optional)">
+    Upload images to enhance your post. Echo automatically processes uploads:
+
+    ```typescript
+    // Upload an image
+    const formData = new FormData();
+    formData.append('file', imageFile);
+    formData.append('filename', imageFile.name);
+
+    const response = await fetch('/api/upload', {
+      method: 'POST',
+      body: formData
+    });
+
+    const { url } = await response.json();
+    // url: https://blob.vercel-storage.com/...
+    ```
+
+    <Info>
+      All images are scanned for NSFW content using TensorFlow.js before upload. Images with high NSFW probability (>25%) are rejected.
+    </Info>
+  </Step>
+
+  <Step title="Set privacy level">
+    Choose who can see your post:
+
+    <Tabs>
+      <Tab title="Anyone">
+        ```typescript
+        privacy: "ANYONE"
+        ```
+        Visible to all users in your college community. This is the default setting.
+      </Tab>
+
+      <Tab title="Followers only">
+        ```typescript
+        privacy: "FOLLOWED"
+        ```
+        Only users who follow you can see this post. Great for more personal content.
+      </Tab>
+
+      <Tab title="Mentioned only">
+        ```typescript
+        privacy: "MENTIONED"
+        ```
+        Only users you specifically mention with `@username` can see the post.
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Submit">
+    Post to your feed:
+
+    ```typescript
+    const response = await fetch('/api/post', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: postData.content,
+        media: postData.media,
+        privacy: postData.privacy
+      })
+    });
+
+    const newPost = await response.json();
+    ```
+  </Step>
+</Steps>
+
+## Post API reference
+
+<CodeGroup>
+```typescript Create Post
+// POST /api/post
+const response = await fetch('/api/post', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    content: "Hello Echo!",
+    media: ["https://blob.url/image.jpg"],
+    privacy: "ANYONE",
+    parentPostId: undefined,  // For replies
+    quoteId: undefined        // For quote posts
+  })
+});
+
+const post = await response.json();
+/*
+{
+  id: "clx...",
+  createdAt: "2024-01-01T00:00:00.000Z",
+  text: "Hello Echo!",
+  media: ["https://blob.url/image.jpg"],
+  privacy: "ANYONE",
+  authorId: "user_id",
+  author: {
+    username: "johndoe",
+    college: { name: "University Name" }
+  }
+}
+*/
+```
+
+```typescript Delete Post
+// DELETE /api/post
+const response = await fetch('/api/post', {
+  method: 'DELETE',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    postId: "clx..."
+  })
+});
+
+// Only the post author can delete their own posts
+// Returns: { message: "Post deleted successfully" }
+```
+
+```typescript Get Feed
+// GET /api/posts
+const response = await fetch('/api/posts');
+const posts = await response.json();
+
+// Returns array of posts from your college
+```
+</CodeGroup>
+
+## Replying to posts
+
+Create threaded conversations by replying to existing posts:
+
+<Steps>
+  <Step title="Click reply">
+    Find the reply button on any post you want to respond to.
+  </Step>
+
+  <Step title="Write your reply">
+    Compose your response in the reply dialog:
+
+    ```typescript
+    // POST /api/post/reply
+    await fetch('/api/post/reply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        parentPostId: "original_post_id",
+        content: "This is my reply",
+        media: [],
+        privacy: "ANYONE"
+      })
+    });
+    ```
+  </Step>
+
+  <Step title="View thread">
+    Replies are displayed in a threaded view. Click any post to see its full reply thread:
+
+    ```typescript
+    // GET /api/post/[id]/thread
+    const response = await fetch('/api/post/clx123/thread');
+    const thread = await response.json();
+
+    // Returns the parent post and all replies
+    ```
+  </Step>
+</Steps>
+
+<Info>
+  The original author receives a notification when someone replies to their post.
+</Info>
+
+## Deleting posts
+
+You can delete your own posts at any time:
+
+<Tabs>
+  <Tab title="UI">
+    1. Navigate to your post
+    2. Click the three-dot menu
+    3. Select "Delete post"
+    4. Confirm the deletion
+
+    <Warning>
+      Deleting a post is permanent. All replies and interactions will also be removed due to cascade deletion.
+    </Warning>
+  </Tab>
+
+  <Tab title="API">
+    ```typescript
+    const deletePost = async (postId: string) => {
+      const response = await fetch('/api/post', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error);
+      }
+
+      return response.json();
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Post schema
+
+Understanding the post data structure:
+
+```prisma schema.prisma
+model Post {
+  id           String         @id @default(cuid())
+  createdAt    DateTime       @default(now())
+  author       User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  authorId     String
+  text         String
+  media        String[]       // Array of blob URLs
+  likes        Like[]
+  dislikes     Dislike[]
+  parentPostId String?        // For replies
+  parentPost   Post?          @relation("rootPost", fields: [parentPostId], references: [id], onDelete: Cascade)
+  replies      Post[]         @relation("rootPost")
+  notification Notification[]
+  reposts      Repost[]
+  quoteId      String?        // For quote posts
+  privacy      PostPrivacy    @default(ANYONE)
+  reports      Report[]
+
+  @@unique([createdAt, id])
+  @@index([authorId])
+}
+
+enum PostPrivacy {
+  FOLLOWED   // Only followers
+  ANYONE     // All college users
+  MENTIONED  // Only mentioned users
+}
+```
+
+## Rate limiting
+
+Post creation is rate-limited to prevent spam:
+
+```typescript
+import { Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
+
+const ratelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(27, "1 m"), // 27 posts per minute
+});
+
+const { success, reset } = await ratelimit.limit(session.user.id);
+
+if (!success) {
+  return NextResponse.json(
+    {
+      error: "Rate limit exceeded",
+      resetAt: new Date(reset).toISOString(),
+    },
+    { status: 429 }
+  );
+}
+```
+
+<Tip>
+  If you hit the rate limit, wait until the `resetAt` timestamp before posting again.
+</Tip>
+
+## Media handling
+
+Echo uses Vercel Blob for media storage:
+
+<Accordion title="Upload flow">
+  ```typescript
+  import { put } from "@vercel/blob";
+
+  // 1. Upload to Vercel Blob
+  const blob = await put(filename, file, {
+    access: "public",
+  });
+
+  // 2. Returns blob URL
+  // { url: "https://blob.vercel-storage.com/..." }
+
+  // 3. Store URL in post.media array
+  await db.post.create({
+    data: {
+      text: content,
+      media: [blob.url],
+      authorId: session.user.id,
+    },
+  });
+  ```
+</Accordion>
+
+<Accordion title="NSFW detection">
+  Before upload, images are scanned client-side:
+
+  ```typescript
+  import nsfwFilter from "@/lib/nsfw";
+
+  const isSafe = await nsfwFilter.isSafe(imageFile);
+
+  if (!isSafe) {
+    toast.error("Image contains inappropriate content");
+    return;
+  }
+
+  // Proceed with upload
+  ```
+
+  The filter checks for:
+  - **Porn**: Probability > 25%
+  - **Hentai**: Probability > 25%
+
+  Images exceeding these thresholds are rejected.
+</Accordion>
+
+<Accordion title="Delete media">
+  When deleting posts, clean up associated media:
+
+  ```typescript
+  // DELETE /api/upload/delete
+  await fetch('/api/upload/delete', {
+    method: 'DELETE',
+    body: JSON.stringify({
+      url: "https://blob.vercel-storage.com/..."
+    })
+  });
+  ```
+</Accordion>
+
+## Best practices
+
+<CardGroup cols={2}>
+  <Card title="Keep it concise" icon="align-left">
+    Short, focused posts get more engagement. Use replies to continue discussions.
+  </Card>
+  <Card title="Use appropriate privacy" icon="lock">
+    Choose privacy levels wisely. Sensitive content should use "FOLLOWERS" or "MENTIONED".
+  </Card>
+  <Card title="Add context" icon="image">
+    Images and media make posts more engaging and understandable.
+  </Card>
+  <Card title="Respect rate limits" icon="gauge">
+    Avoid rapid-fire posting. Quality over quantity.
+  </Card>
+</CardGroup>
+
+## Common issues
+
+<AccordionGroup>
+  <Accordion title="Post failed to create">
+    Common causes:
+    - Rate limit exceeded (wait and retry)
+    - Invalid privacy value
+    - Media upload failed NSFW check
+    - Session expired (re-authenticate)
+  </Accordion>
+
+  <Accordion title="Can't delete post">
+    You can only delete your own posts. Check:
+    - You're logged in as the post author
+    - The post still exists
+    - You have a valid session
+  </Accordion>
+
+  <Accordion title="Image upload fails">
+    Check:
+    - File size (max varies by blob config)
+    - File format (JPEG, PNG, WebP supported)
+    - NSFW content (may be rejected)
+    - Network connection
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Social features" icon="heart" href="/features/social">
+    Learn about likes, reposts, and follows
+  </Card>
+  <Card title="Privacy controls" icon="shield" href="/features/privacy">
+    Configure post and profile privacy
+  </Card>
+  <Card title="Notifications" icon="bell" href="/features/notifications">
+    Get notified about post interactions
+  </Card>
+  <Card title="Content moderation" icon="flag" href="/security/content-moderation">
+    Report inappropriate posts
+  </Card>
+</CardGroup>

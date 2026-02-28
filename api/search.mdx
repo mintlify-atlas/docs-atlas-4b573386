@@ -1,0 +1,311 @@
+---
+title: Search
+description: Search for users, posts, and colleges across the Echo platform
+---
+
+## Search
+
+`GET /api/search`
+
+Search across users, posts, and colleges using a query string.
+
+### Query parameters
+
+<ParamField query="q" type="string" required>
+  Search query string
+</ParamField>
+
+<ParamField query="type" type="string" optional>
+  Filter results by type. Options: `all`, `users`, `posts`, `colleges`. Defaults to `all`
+</ParamField>
+
+### Response
+
+<ResponseField name="users" type="array">
+  Array of matching user profiles
+  <Expandable title="User object properties">
+    <ResponseField name="username" type="string">
+      Username handle
+    </ResponseField>
+    <ResponseField name="bio" type="string">
+      User biography
+    </ResponseField>
+    <ResponseField name="college" type="object">
+      College information
+      <Expandable title="properties">
+        <ResponseField name="name" type="string">
+          College name
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="posts" type="array">
+  Array of matching posts
+  <Expandable title="Post object properties">
+    <ResponseField name="id" type="string">
+      Post identifier
+    </ResponseField>
+    <ResponseField name="text" type="string">
+      Post content
+    </ResponseField>
+    <ResponseField name="author" type="object">
+      Post author information
+      <Expandable title="properties">
+        <ResponseField name="username" type="string">
+          Author's username
+        </ResponseField>
+        <ResponseField name="college" type="object">
+          Author's college
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="_count" type="object">
+      Engagement metrics
+      <Expandable title="properties">
+        <ResponseField name="likes" type="number">
+          Number of likes
+        </ResponseField>
+        <ResponseField name="dislikes" type="number">
+          Number of dislikes
+        </ResponseField>
+        <ResponseField name="replies" type="number">
+          Number of replies
+        </ResponseField>
+        <ResponseField name="reposts" type="number">
+          Number of reposts
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="createdAt" type="string">
+      ISO 8601 timestamp
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="colleges" type="array">
+  Array of matching colleges
+  <Expandable title="College object properties">
+    <ResponseField name="id" type="string">
+      College identifier
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      College name
+    </ResponseField>
+    <ResponseField name="_count" type="object">
+      Statistics
+      <Expandable title="properties">
+        <ResponseField name="User" type="number">
+          Number of users from this college
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Search behavior
+
+### User search
+
+Searches across:
+- Usernames (case-insensitive partial match)
+- Biographies (case-insensitive partial match)
+
+**Filters**:
+- Only returns users with `PUBLIC` privacy setting
+- Maximum 10 results
+
+### Post search
+
+Searches across:
+- Post text content (case-insensitive partial match)
+
+**Filters**:
+- Only returns posts with `ANYONE` privacy
+- Results sorted by creation date (descending)
+- Maximum 20 results
+
+### College search
+
+Searches across:
+- College names (case-insensitive partial match)
+
+**Filters**:
+- Maximum 10 results
+- Includes user count for each college
+
+## Example requests
+
+### Search all content
+
+```bash
+curl -X GET 'https://your-domain.com/api/search?q=computer%20science' \
+  -H 'Content-Type: application/json'
+```
+
+### Search only users
+
+```bash
+curl -X GET 'https://your-domain.com/api/search?q=john&type=users' \
+  -H 'Content-Type: application/json'
+```
+
+### Search only posts
+
+```bash
+curl -X GET 'https://your-domain.com/api/search?q=echo&type=posts' \
+  -H 'Content-Type: application/json'
+```
+
+### Search only colleges
+
+```bash
+curl -X GET 'https://your-domain.com/api/search?q=stanford&type=colleges' \
+  -H 'Content-Type: application/json'
+```
+
+## Example responses
+
+### Search all (type=all)
+
+```json
+{
+  "users": [
+    {
+      "username": "john_doe",
+      "bio": "Computer Science student at Stanford",
+      "college": {
+        "name": "Stanford University"
+      }
+    }
+  ],
+  "posts": [
+    {
+      "id": "clx1234567890",
+      "text": "Just finished my Computer Science midterm!",
+      "author": {
+        "username": "jane_smith",
+        "college": {
+          "name": "MIT"
+        }
+      },
+      "_count": {
+        "likes": 24,
+        "dislikes": 2,
+        "replies": 5,
+        "reposts": 3
+      },
+      "createdAt": "2026-02-28T10:30:00.000Z"
+    }
+  ],
+  "colleges": [
+    {
+      "id": "clx9876543210",
+      "name": "Stanford University",
+      "_count": {
+        "User": 1247
+      }
+    }
+  ]
+}
+```
+
+### Search users only (type=users)
+
+```json
+{
+  "users": [
+    {
+      "username": "john_doe",
+      "bio": "CS student",
+      "college": {
+        "name": "Stanford University"
+      }
+    },
+    {
+      "username": "john_smith",
+      "bio": "Engineering major",
+      "college": {
+        "name": "MIT"
+      }
+    }
+  ],
+  "posts": [],
+  "colleges": []
+}
+```
+
+## Error responses
+
+<CodeGroup>
+```json 400 - Missing query
+{
+  "error": "Missing search query"
+}
+```
+
+```json 500 - Server error
+{
+  "error": "Failed to perform search"
+}
+```
+</CodeGroup>
+
+## Use cases
+
+### Autocomplete search
+
+Implement real-time search suggestions:
+
+```javascript
+const searchUsers = async (query) => {
+  const response = await fetch(
+    `/api/search?q=${encodeURIComponent(query)}&type=users`
+  );
+  const { users } = await response.json();
+  return users;
+};
+```
+
+### Content discovery
+
+Find relevant posts based on keywords:
+
+```javascript
+const searchPosts = async (keyword) => {
+  const response = await fetch(
+    `/api/search?q=${encodeURIComponent(keyword)}&type=posts`
+  );
+  const { posts } = await response.json();
+  return posts;
+};
+```
+
+### College exploration
+
+Discover colleges and their user counts:
+
+```javascript
+const searchColleges = async (name) => {
+  const response = await fetch(
+    `/api/search?q=${encodeURIComponent(name)}&type=colleges`
+  );
+  const { colleges } = await response.json();
+  return colleges;
+};
+```
+
+## Performance considerations
+
+- Search queries use database indexes for optimal performance
+- Results are limited to prevent excessive data transfer
+- Case-insensitive matching uses PostgreSQL's `insensitive` mode
+- Privacy filters are applied at the database level
+
+## Tips
+
+- Use specific search terms for better results
+- Filter by type when you know what you're looking for
+- URL-encode query parameters to handle special characters
+- Implement client-side debouncing for real-time search

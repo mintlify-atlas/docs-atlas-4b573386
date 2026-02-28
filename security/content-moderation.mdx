@@ -1,0 +1,617 @@
+---
+title: Content moderation
+description: NSFW detection, reporting, and content safety on Echo
+---
+
+## Overview
+
+Echo employs multiple layers of content moderation to keep the platform safe and appropriate for college communities. This includes AI-powered NSFW detection, user reporting, and admin moderation tools.
+
+## NSFW detection
+
+Echo uses TensorFlow.js with NSFWJS to detect inappropriate images before upload.
+
+### How it works
+
+<Steps>
+  <Step title="Client-side scanning">
+    Images are scanned in the browser before upload:
+
+    ```typescript lib/nsfw.ts
+    import * as tf from "@tensorflow/tfjs";
+    import * as nsfwjs from "nsfwjs";
+
+    class NSFWFilter {
+      model: nsfwjs.NSFWJS | null = null;
+
+      constructor() {
+        this.getModel();
+      }
+
+      async getModel() {
+        try {
+          this.model = await nsfwjs.load();
+        } catch (error) {
+          console.error('Failed to load NSFW model:', error);
+        }
+      }
+
+      async isSafe(file: File): Promise<boolean> {
+        const predictions = await this.predictImg(file, 3);
+        
+        const pornPrediction = predictions.find(
+          ({ className }) => className === "Porn"
+        );
+        const hentaiPrediction = predictions.find(
+          ({ className }) => className === "Hentai"
+        );
+
+        if (!pornPrediction || !hentaiPrediction) {
+          return true;
+        }
+
+        // Reject if probability > 25%
+        return !(
+          pornPrediction.probability > 0.25 ||
+          hentaiPrediction.probability > 0.25
+        );
+      }
+    }
+
+    export default new NSFWFilter();
+    ```
+  </Step>
+
+  <Step title="Prediction categories">
+    NSFWJS classifies images into 5 categories:
+
+    | Category | Description | Action |
+    |----------|-------------|--------|
+    | **Drawing** | Drawings, cartoons | Allow |
+    | **Hentai** | Anime/manga NSFW | Block if >25% |
+    | **Neutral** | Safe content | Allow |
+    | **Porn** | Explicit content | Block if >25% |
+    | **Sexy** | Suggestive content | Allow |
+
+    <Info>
+      The 25% threshold balances safety with false positives. Adjust based on your community standards.
+    </Info>
+  </Step>
+
+  <Step title="Usage in upload flow">
+    ```typescript components/PostComposer.tsx
+    import nsfwFilter from '@/lib/nsfw';
+
+    const handleImageSelect = async (file: File) => {
+      try {
+        // Show loading state
+        setScanning(true);
+
+        // Check if image is safe
+        const isSafe = await nsfwFilter.isSafe(file);
+
+        if (!isSafe) {
+          toast.error(
+            'This image contains inappropriate content and cannot be uploaded.'
+          );
+          return;
+        }
+
+        // Proceed with upload
+        await uploadImage(file);
+      } catch (error) {
+        toast.error('Failed to scan image. Please try again.');
+      } finally {
+        setScanning(false);
+      }
+    };
+    ```
+  </Step>
+</Steps>
+
+### NSFW detection accuracy
+
+<Tabs>
+  <Tab title="Strengths">
+    - **Fast**: Runs client-side, no server round-trip
+    - **Private**: Images never leave user's browser during scanning
+    - **Accurate**: ~90%+ accuracy on explicit content
+    - **Free**: Open-source model, no API costs
+    - **Offline**: Works without internet (after model loads)
+  </Tab>
+
+  <Tab title="Limitations">
+    - **False positives**: May flag artistic/medical images
+    - **Context-blind**: Doesn't understand context
+    - **Client-side**: Can be bypassed by determined users
+    - **Model size**: ~4MB download on first use
+    - **Performance**: Can slow down older devices
+
+    <Warning>
+      NSFW detection is a deterrent, not a guarantee. Combine with user reporting and admin review.
+    </Warning>
+  </Tab>
+
+  <Tab title="Tuning">
+    Adjust the probability threshold:
+
+    ```typescript
+    // More strict (30% threshold)
+    return !(
+      pornPrediction.probability > 0.30 ||
+      hentaiPrediction.probability > 0.30
+    );
+
+    // More lenient (20% threshold)
+    return !(
+      pornPrediction.probability > 0.20 ||
+      hentaiPrediction.probability > 0.20
+    );
+
+    // Include "Sexy" category
+    const sexyPrediction = predictions.find(
+      ({ className }) => className === "Sexy"
+    );
+    return !(
+      pornPrediction.probability > 0.25 ||
+      hentaiPrediction.probability > 0.25 ||
+      sexyPrediction.probability > 0.50
+    );
+    ```
+  </Tab>
+</Tabs>
+
+## User reporting
+
+Users can report inappropriate posts for admin review.
+
+### Report flow
+
+<Steps>
+  <Step title="User reports post">
+    ```typescript
+    // POST /api/profile/report
+    const reportPost = async (postId: string, reason: string) => {
+      const response = await fetch('/api/profile/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          postId,
+          reason
+        })
+      });
+
+      if (response.ok) {
+        toast.success('Report submitted. Thank you for keeping Echo safe.');
+      }
+    };
+    ```
+  </Step>
+
+  <Step title="Report stored in database">
+    ```typescript app/api/profile/report/route.ts
+    export async function POST(req: NextRequest) {
+      const session = await getServerSession(config);
+      if (!session) {
+        return NextResponse.json(
+          { error: 'Authentication required' },
+          { status: 401 }
+        );
+      }
+
+      const { postId, reason } = await req.json();
+
+      const post = await db.post.findUnique({
+        where: { id: postId },
+        select: { authorId: true },
+      });
+
+      if (!post) {
+        return NextResponse.json(
+          { error: 'Post not found' },
+          { status: 404 }
+        );
+      }
+
+      // Create report
+      const report = await db.report.create({
+        data: {
+          reason,
+          postId,
+          userId: post.authorId,
+          reportedById: session.user.id,
+        },
+      });
+
+      return NextResponse.json(report);
+    }
+    ```
+  </Step>
+
+  <Step title="Admins review reports">
+    Admins can view all reports and take action:
+
+    ```typescript
+    // GET /api/admin/reports
+    const reports = await db.report.findMany({
+      include: {
+        post: {
+          include: {
+            author: {
+              select: { username: true },
+            },
+          },
+        },
+        reportedBy: {
+          select: { username: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    ```
+  </Step>
+</Steps>
+
+### Report schema
+
+```prisma schema.prisma
+model Report {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now())
+  reason       String
+  post         Post?    @relation(fields: [postId], references: [id])
+  postId       String?
+  user         User?    @relation("reportedUser", fields: [userId], references: [id])
+  userId       String?
+  reportedBy   User     @relation("reporter", fields: [reportedById], references: [id])
+  reportedById String
+
+  @@index([reportedById])
+}
+```
+
+### Report categories
+
+Implement predefined report reasons:
+
+<CodeGroup>
+```typescript Report Reasons
+export const REPORT_REASONS = [
+  'Spam or misleading',
+  'Harassment or bullying',
+  'Hate speech or discrimination',
+  'Violence or dangerous content',
+  'Sexual content',
+  'Personal information shared',
+  'Impersonation',
+  'Other',
+] as const;
+
+type ReportReason = typeof REPORT_REASONS[number];
+```
+
+```typescript Report Dialog
+const ReportDialog = ({ postId }: { postId: string }) => {
+  const [reason, setReason] = useState<string>('');
+  const [details, setDetails] = useState('');
+
+  const submitReport = async () => {
+    await fetch('/api/profile/report', {
+      method: 'POST',
+      body: JSON.stringify({
+        postId,
+        reason: `${reason}: ${details}`,
+      }),
+    });
+  };
+
+  return (
+    <Dialog>
+      <Select value={reason} onValueChange={setReason}>
+        {REPORT_REASONS.map((r) => (
+          <SelectItem key={r} value={r}>{r}</SelectItem>
+        ))}
+      </Select>
+      <Textarea
+        placeholder="Additional details (optional)"
+        value={details}
+        onChange={(e) => setDetails(e.target.value)}
+      />
+      <Button onClick={submitReport}>Submit Report</Button>
+    </Dialog>
+  );
+};
+```
+</CodeGroup>
+
+## Admin moderation tools
+
+Admins have special privileges for content moderation:
+
+<Tabs>
+  <Tab title="View reports">
+    ```typescript
+    // Admin dashboard - reports page
+    const reports = await db.report.findMany({
+      include: {
+        post: true,
+        reportedBy: true,
+        user: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    // Group by post to see multiple reports
+    const reportsByPost = reports.reduce((acc, report) => {
+      const postId = report.postId || 'none';
+      if (!acc[postId]) acc[postId] = [];
+      acc[postId].push(report);
+      return acc;
+    }, {} as Record<string, typeof reports>);
+    ```
+  </Tab>
+
+  <Tab title="Delete posts">
+    ```typescript
+    // DELETE /api/admin/posts/[id]
+    export async function DELETE(
+      req: Request,
+      { params }: { params: { id: string } }
+    ) {
+      const session = await getServerSession(config);
+
+      if (!session?.user?.isAdmin) {
+        return NextResponse.json(
+          { error: 'Admin access required' },
+          { status: 403 }
+        );
+      }
+
+      await db.post.delete({
+        where: { id: params.id },
+      });
+
+      return NextResponse.json({ success: true });
+    }
+    ```
+  </Tab>
+
+  <Tab title="Ban users">
+    ```typescript
+    // Add banned field to User model
+    model User {
+      // ... other fields
+      banned    Boolean  @default(false)
+      bannedAt  DateTime?
+      banReason String?
+    }
+
+    // Ban user
+    await db.user.update({
+      where: { id: userId },
+      data: {
+        banned: true,
+        bannedAt: new Date(),
+        banReason: 'Repeated violations of community guidelines',
+      },
+    });
+
+    // Check ban status on requests
+    const user = await db.user.findUnique({ where: { id: session.user.id } });
+    if (user?.banned) {
+      return NextResponse.json(
+        { error: 'Account suspended' },
+        { status: 403 }
+      );
+    }
+    ```
+  </Tab>
+
+  <Tab title="Announcements">
+    ```typescript
+    // POST /api/admin/announcements
+    export async function POST(req: Request) {
+      const session = await getServerSession(config);
+
+      if (!session?.user?.isAdmin) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+
+      const { message } = await req.json();
+
+      // Create public notification visible to all users
+      const announcement = await db.notification.create({
+        data: {
+          type: 'ADMIN',
+          message,
+          isPublic: true,
+          senderUserId: session.user.id,
+        },
+      });
+
+      return NextResponse.json(announcement);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Automated moderation
+
+Implement automated rules to catch common violations:
+
+<Accordion title="Spam detection">
+  ```typescript
+  // Detect rapid posting
+  const recentPosts = await db.post.count({
+    where: {
+      authorId: userId,
+      createdAt: {
+        gte: new Date(Date.now() - 60 * 1000), // Last minute
+      },
+    },
+  });
+
+  if (recentPosts > 10) {
+    // Flag as potential spam
+    await db.report.create({
+      data: {
+        reason: 'Automated: Rapid posting detected',
+        userId,
+        reportedById: 'system',
+      },
+    });
+  }
+  ```
+</Accordion>
+
+<Accordion title="Duplicate content">
+  ```typescript
+  // Check for duplicate posts
+  const duplicate = await db.post.findFirst({
+    where: {
+      authorId: userId,
+      text: content,
+      createdAt: {
+        gte: new Date(Date.now() - 3600 * 1000), // Last hour
+      },
+    },
+  });
+
+  if (duplicate) {
+    return NextResponse.json(
+      { error: 'Duplicate post detected' },
+      { status: 400 }
+    );
+  }
+  ```
+</Accordion>
+
+<Accordion title="Profanity filter">
+  ```typescript
+  import Filter from 'bad-words';
+  const filter = new Filter();
+
+  // Check content
+  if (filter.isProfane(content)) {
+    // Option 1: Block
+    return NextResponse.json(
+      { error: 'Content contains inappropriate language' },
+      { status: 400 }
+    );
+
+    // Option 2: Filter
+    const cleaned = filter.clean(content);
+
+    // Option 3: Flag for review
+    await db.report.create({
+      data: {
+        reason: 'Automated: Profanity detected',
+        userId,
+      },
+    });
+  }
+  ```
+</Accordion>
+
+## Content guidelines
+
+Clearly communicate community standards:
+
+<CardGroup cols={2}>
+  <Card title="Prohibited content" icon="ban">
+    - Illegal content
+    - Explicit sexual content
+    - Violence or gore
+    - Hate speech
+    - Personal information (doxxing)
+    - Spam or scams
+    - Impersonation
+    - Harassment or bullying
+  </Card>
+  <Card title="Allowed content" icon="check">
+    - Personal opinions and discussions
+    - Questions and advice
+    - College-related content
+    - Memes and humor (appropriate)
+    - Event announcements
+    - Study groups and collaboration
+  </Card>
+</CardGroup>
+
+## Moderation workflow
+
+<Steps>
+  <Step title="Automatic screening">
+    - NSFW detection blocks inappropriate images
+    - Rate limiting prevents spam
+    - Duplicate detection catches reposts
+  </Step>
+
+  <Step title="User reports">
+    - Users flag problematic content
+    - Reports queue for admin review
+    - Multiple reports prioritize review
+  </Step>
+
+  <Step title="Admin review">
+    - Admins view report queue
+    - Review content and context
+    - Decide on action:
+      - Dismiss (false report)
+      - Delete post
+      - Warn user
+      - Ban user
+  </Step>
+
+  <Step title="Action taken">
+    - Post deleted if violating
+    - User notified of violation
+    - Repeated violations = ban
+    - Appeals process (if implemented)
+  </Step>
+</Steps>
+
+## Best practices
+
+<CardGroup cols={2}>
+  <Card title="Be proactive" icon="magnifying-glass">
+    Regularly review flagged content. Don't wait for reports to pile up.
+  </Card>
+  <Card title="Be transparent" icon="eye">
+    Clearly communicate rules and consequences to users.
+  </Card>
+  <Card title="Be consistent" icon="scale-balanced">
+    Apply rules fairly across all users. Document decisions.
+  </Card>
+  <Card title="Be responsive" icon="bolt">
+    Act quickly on serious violations (violence, harassment, illegal content).
+  </Card>
+</CardGroup>
+
+## Privacy considerations
+
+<Warning>
+  Moderation requires viewing user content. Ensure moderators:
+  - Sign confidentiality agreements
+  - Only access what's necessary
+  - Don't share user information
+  - Follow data protection regulations
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Rate limiting" icon="gauge" href="/security/rate-limiting">
+    Prevent abuse with rate limits
+  </Card>
+  <Card title="Authentication" icon="lock" href="/security/authentication">
+    Secure user authentication
+  </Card>
+  <Card title="Privacy settings" icon="shield" href="/features/privacy">
+    User privacy controls
+  </Card>
+  <Card title="Posts" icon="pencil" href="/features/posts">
+    Understand post creation and moderation
+  </Card>
+</CardGroup>

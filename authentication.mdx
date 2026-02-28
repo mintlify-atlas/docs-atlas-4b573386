@@ -1,0 +1,447 @@
+---
+title: Authentication
+description: Learn how Echo's credential-based authentication system protects user identity
+---
+
+## Overview
+
+Echo uses NextAuth.js with a custom credentials provider to authenticate users while maintaining anonymity. Unlike traditional social platforms, Echo never exposes your real identity - only your chosen username is visible to other users.
+
+## How authentication works
+
+Echo's authentication system is designed around privacy and anonymity:
+
+<Steps>
+  <Step title="Credential hashing">
+    When you sign up, Echo creates a cryptographic hash from your email and password:
+
+    ```typescript
+    import { createHash } from 'crypto';
+
+    export function generateUserHash(email: string, password: string): string {
+      const salt = process.env.AUTH_SALT;
+      const combined = `${email}:${password}:${salt}`;
+      return createHash('sha256').update(combined).digest('hex');
+    }
+    ```
+
+    This hash becomes your unique identifier - no passwords are stored in plain text.
+  </Step>
+
+  <Step title="Session management">
+    After successful login, NextAuth creates a JWT session:
+
+    ```typescript
+    // lib/auth.ts
+    export const config = {
+      session: {
+        strategy: "jwt",
+        maxAge: 60 * 60 * 24 * 30, // 30 days
+        updateAge: 60 * 60 * 24,   // 24 hours
+      },
+      // ...
+    } satisfies NextAuthOptions;
+    ```
+
+    Sessions last 30 days and are automatically refreshed every 24 hours.
+  </Step>
+
+  <Step title="User verification">
+    Every request verifies the session and loads minimal user data:
+
+    ```typescript
+    import { getServerSession } from 'next-auth';
+    import { config } from '@/lib/auth';
+
+    const session = await getServerSession(config);
+    if (!session?.user) {
+      return new Response('Unauthorized', { status: 401 });
+    }
+
+    // session.user contains: { id, username, college, isAdmin }
+    ```
+  </Step>
+</Steps>
+
+## NextAuth configuration
+
+Echo's NextAuth setup prioritizes security and anonymity:
+
+<CodeGroup>
+```typescript lib/auth.ts
+import type { NextAuthOptions } from "next-auth";
+import CredentialsProvider from "next-auth/providers/credentials";
+import { db } from "@/lib/db";
+import { generateUserHash } from "./utils";
+
+export const config = {
+  secret: process.env.NEXTAUTH_SECRET,
+  session: {
+    strategy: "jwt",
+    maxAge: 60 * 60 * 24 * 30, // 30 days
+    updateAge: 60 * 60 * 24,   // 24 hours
+  },
+  providers: [
+    CredentialsProvider({
+      name: "Credentials",
+      credentials: {
+        email: { label: "Email", type: "text" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(credentials) {
+        if (!credentials?.email || !credentials?.password) {
+          return null;
+        }
+
+        const userHash = generateUserHash(
+          credentials.email,
+          credentials.password
+        );
+
+        const user = await db.user.findUnique({
+          where: { userHash },
+          select: {
+            id: true,
+            username: true,
+            college: { select: { name: true } },
+            isAdmin: true,
+          },
+        });
+
+        if (!user) return null;
+
+        return {
+          id: user.id,
+          username: user.username,
+          college: user.college.name,
+          isAdmin: user.isAdmin,
+        };
+      },
+    }),
+  ],
+  callbacks: {
+    async session({ session, token }) {
+      session.user = {
+        ...session.user,
+        id: token.id,
+        username: token.username,
+        college: token.college,
+        isAdmin: token.isAdmin,
+      };
+      return session;
+    },
+    async jwt({ token, user }) {
+      if (user) {
+        token.id = user.id;
+        token.username = user.username;
+        token.college = user.college;
+        token.isAdmin = user.isAdmin;
+      }
+      return token;
+    },
+  },
+  pages: {
+    signIn: "/auth/login",
+    signOut: "/auth/logout",
+  },
+} satisfies NextAuthOptions;
+```
+
+```typescript app/api/auth/[...nextauth]/route.tsx
+import NextAuth from "next-auth";
+import { config } from "@/lib/auth";
+
+const handler = NextAuth(config);
+
+export { handler as GET, handler as POST };
+```
+</CodeGroup>
+
+## Login flow
+
+Users log in through a simple credential-based flow:
+
+<Tabs>
+  <Tab title="Client-side">
+    ```typescript
+    import { signIn } from "next-auth/react";
+
+    const handleLogin = async (email: string, password: string) => {
+      const result = await signIn("credentials", {
+        redirect: false,
+        email,
+        password,
+      });
+
+      if (result?.error) {
+        // Handle authentication error
+        toast.error("Invalid credentials");
+      } else {
+        // Redirect to dashboard
+        router.push("/");
+      }
+    };
+    ```
+  </Tab>
+
+  <Tab title="Server-side">
+    ```typescript
+    // The authorize function handles verification
+    async authorize(credentials) {
+      // 1. Validate input format
+      if (!validateEmail(credentials.email) || 
+          !validatePassword(credentials.password)) {
+        return null;
+      }
+
+      // 2. Generate hash from credentials
+      const userHash = generateUserHash(
+        credentials.email,
+        credentials.password
+      );
+
+      // 3. Look up user by hash
+      const user = await db.user.findUnique({
+        where: { userHash },
+      });
+
+      // 4. Return user data or null
+      return user ? {
+        id: user.id,
+        username: user.username,
+        college: user.college.name,
+        isAdmin: user.isAdmin,
+      } : null;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Signup flow
+
+New users go through email verification before account creation:
+
+<Steps>
+  <Step title="Validate email domain">
+    ```typescript
+    // Check if email belongs to supported college
+    const response = await fetch(
+      `/api/validateCollege?email=${email}`
+    );
+    const college = await response.json();
+    // Returns: { id: string, name: string } or { error: string }
+    ```
+  </Step>
+
+  <Step title="Send verification code">
+    ```typescript
+    // Request email verification
+    await fetch('/api/verifyCollege/send', {
+      method: 'POST',
+      body: JSON.stringify({ email })
+    });
+    ```
+
+    Echo sends a 15-character code to the user's email using Resend.
+  </Step>
+
+  <Step title="Verify code">
+    ```typescript
+    // Verify the code
+    const response = await fetch('/api/verifyCollege/verify', {
+      method: 'POST',
+      body: JSON.stringify({ email, code })
+    });
+    ```
+  </Step>
+
+  <Step title="Create account">
+    ```typescript
+    // Create user account
+    await fetch('/api/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify({
+        username,
+        email,
+        verificationCode,
+        password
+      })
+    });
+    ```
+
+    The server creates the user hash and stores it with the username.
+  </Step>
+
+  <Step title="Auto-login">
+    After successful signup, the user is automatically signed in:
+
+    ```typescript
+    await signIn("credentials", {
+      redirect: false,
+      email,
+      password,
+    });
+    ```
+  </Step>
+</Steps>
+
+## Session access
+
+Access the current session in various contexts:
+
+<CodeGroup>
+```typescript Server Component
+import { getServerSession } from "next-auth";
+import { config } from "@/lib/auth";
+
+export default async function ProtectedPage() {
+  const session = await getServerSession(config);
+
+  if (!session?.user) {
+    redirect("/auth/login");
+  }
+
+  return (
+    <div>
+      <h1>Welcome, {session.user.username}</h1>
+      <p>College: {session.user.college}</p>
+    </div>
+  );
+}
+```
+
+```typescript Client Component
+"use client";
+
+import { useSession } from "next-auth/react";
+
+export default function ProfileButton() {
+  const { data: session, status } = useSession();
+
+  if (status === "loading") {
+    return <div>Loading...</div>;
+  }
+
+  if (!session) {
+    return <a href="/auth/login">Sign in</a>;
+  }
+
+  return <div>@{session.user.username}</div>;
+}
+```
+
+```typescript API Route
+import { getServerSession } from "next-auth";
+import { config } from "@/lib/auth";
+import { NextResponse } from "next/server";
+
+export async function POST(req: Request) {
+  const session = await getServerSession(config);
+  
+  if (!session?.user) {
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
+  // Use session.user.id for database queries
+  const posts = await db.post.findMany({
+    where: { authorId: session.user.id },
+  });
+
+  return NextResponse.json(posts);
+}
+```
+</CodeGroup>
+
+## Security considerations
+
+<Warning>
+  **Never expose these values client-side:**
+  - `NEXTAUTH_SECRET`
+  - `AUTH_SALT`
+  - User email addresses
+  - User password hashes
+</Warning>
+
+<Accordion title="Password requirements">
+  Echo enforces strong password requirements:
+
+  ```typescript
+  export function validatePassword(password: string): boolean {
+    // 8-50 characters
+    if (password.length < 8 || password.length > 50) return false;
+
+    // At least one uppercase
+    if (!/[A-Z]/.test(password)) return false;
+
+    // At least one lowercase
+    if (!/[a-z]/.test(password)) return false;
+
+    // At least one number
+    if (!/[0-9]/.test(password)) return false;
+
+    // At least one special character
+    if (!/[^A-Za-z0-9]/.test(password)) return false;
+
+    return true;
+  }
+  ```
+</Accordion>
+
+<Accordion title="Environment variables">
+  Required environment variables for authentication:
+
+  ```bash .env
+  # NextAuth secret (generate with: openssl rand -base64 32)
+  NEXTAUTH_SECRET="your-secret-here"
+
+  # Base URL for callbacks
+  NEXTAUTH_URL="http://localhost:3000"
+
+  # Salt for user hash generation (keep this secret!)
+  AUTH_SALT="your-auth-salt"
+  ```
+</Accordion>
+
+<Accordion title="Rate limiting">
+  Authentication endpoints are protected by rate limits:
+
+  - Login attempts: Limited to prevent brute force attacks
+  - Signup: Limited to prevent spam accounts
+  - Email verification: Limited sends per IP address
+</Accordion>
+
+## Logout
+
+Users can sign out to end their session:
+
+```typescript
+import { signOut } from "next-auth/react";
+
+const handleLogout = async () => {
+  await signOut({
+    callbackUrl: "/auth/login",
+  });
+};
+```
+
+This clears the JWT session and redirects to the login page.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Security overview" icon="shield" href="/security/authentication">
+    Deep dive into Echo's security architecture
+  </Card>
+  <Card title="Rate limiting" icon="gauge" href="/security/rate-limiting">
+    Learn about API rate limits and abuse prevention
+  </Card>
+  <Card title="Environment setup" icon="gear" href="/deployment/environment">
+    Configure environment variables for production
+  </Card>
+  <Card title="Privacy features" icon="eye-slash" href="/features/privacy">
+    Understand user privacy controls
+  </Card>
+</CardGroup>

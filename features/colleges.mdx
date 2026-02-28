@@ -1,0 +1,482 @@
+---
+title: College communities
+description: Understand how Echo's college-based communities work
+---
+
+## Overview
+
+Echo is built around college-specific communities. Each college has its own isolated ecosystem where students can connect, share, and engage with their peers.
+
+## How college verification works
+
+Echo uses email domain verification to ensure only legitimate students join each college community.
+
+<Steps>
+  <Step title="Email domain validation">
+    When you sign up, Echo validates your email against known college domains:
+
+    ```typescript
+    // GET /api/validateCollege?email=student@college.edu
+    const response = await fetch(
+      `/api/validateCollege?email=${email}`
+    );
+    
+    const result = await response.json();
+    // Success: { id: "college_id", name: "College Name" }
+    // Failure: { error: "Domain not found" }
+    ```
+
+    <Info>
+      Your administrator must add your college's email domain to the system before students can sign up.
+    </Info>
+  </Step>
+
+  <Step title="Email verification">
+    After domain validation, you receive a verification code:
+
+    ```typescript
+    // POST /api/verifyCollege/send
+    await fetch('/api/verifyCollege/send', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'student@college.edu' })
+    });
+
+    // Email sent with 15-character verification code
+    ```
+
+    This proves you have access to the email address.
+  </Step>
+
+  <Step title="Account creation">
+    Once verified, your account is created and linked to your college:
+
+    ```typescript
+    // User is associated with college
+    {
+      username: "johndoe",
+      userHash: "...",
+      collegeId: "verified_college_id",
+      college: {
+        name: "University Name",
+        domain: "college.edu"
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+## College isolation
+
+Each college operates as an isolated community:
+
+<Tabs>
+  <Tab title="Posts">
+    You only see posts from users in your college:
+
+    ```typescript
+    // Feed query
+    const posts = await db.post.findMany({
+      where: {
+        author: {
+          collegeId: currentUser.collegeId
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    ```
+
+    **Benefits:**
+    - Relevant content from your peers
+    - Community-specific discussions
+    - No noise from other colleges
+  </Tab>
+
+  <Tab title="Users">
+    Search and discovery is limited to your college:
+
+    ```typescript
+    // User search
+    const users = await db.user.findMany({
+      where: {
+        collegeId: currentUser.collegeId,
+        username: {
+          contains: searchQuery,
+          mode: 'insensitive'
+        }
+      }
+    });
+    ```
+
+    You can only:
+    - Search for users in your college
+    - Follow users in your college
+    - See profiles from your college
+  </Tab>
+
+  <Tab title="Interactions">
+    All social features respect college boundaries:
+
+    - **Likes**: Only on posts from your college
+    - **Replies**: Only to posts from your college
+    - **Reposts**: Only of posts from your college
+    - **Follows**: Only users from your college
+    - **Notifications**: Only from your college users
+
+    <Note>
+      This creates a safe, focused community environment.
+    </Note>
+  </Tab>
+</Tabs>
+
+## College schema
+
+```prisma schema.prisma
+model College {
+  id        String   @id @default(cuid())
+  name      String
+  domain    String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  User User[]
+
+  @@index([name, domain])
+}
+
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  collegeId String
+  college   College  @relation(fields: [collegeId], references: [id])
+  // ... other fields
+
+  @@index([collegeId, username, userHash])
+}
+```
+
+## View your college community
+
+Explore your college's Echo community:
+
+<CodeGroup>
+```typescript Get College Info
+// GET /api/college/[id]
+const response = await fetch(`/api/college/${collegeId}`);
+const college = await response.json();
+
+/*
+{
+  id: "college_id",
+  name: "University Name",
+  domain: "college.edu",
+  createdAt: "2024-01-01T00:00:00.000Z",
+  _count: {
+    User: 1234  // Total users from this college
+  }
+}
+*/
+```
+
+```typescript Get College Users
+// Fetch users from your college
+const users = await db.user.findMany({
+  where: { collegeId: currentUser.collegeId },
+  select: {
+    username: true,
+    bio: true,
+    privacy: true,
+    _count: {
+      select: {
+        posts: true,
+        followers: true,
+        following: true
+      }
+    }
+  },
+  orderBy: { createdAt: 'desc' },
+  take: 50
+});
+```
+</CodeGroup>
+
+## Adding a new college
+
+Administrators can add colleges to Echo:
+
+<Steps>
+  <Step title="Identify the email domain">
+    Find the official student email domain for the college:
+    
+    - `@college.edu`
+    - `@stu.college.ac.in`
+    - `@students.university.edu`
+
+    <Warning>
+      Only add verified institutional domains. Don't add public email providers like Gmail or Yahoo.
+    </Warning>
+  </Step>
+
+  <Step title="Create the college record">
+    ```typescript
+    // POST /api/seed/colleges (admin only)
+    await fetch('/api/seed/colleges', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: "University Name",
+        domain: "college.edu"
+      })
+    });
+    ```
+  </Step>
+
+  <Step title="Verify the domain">
+    Test that the domain validation works:
+
+    ```typescript
+    const response = await fetch(
+      '/api/validateCollege?email=test@college.edu'
+    );
+    
+    const result = await response.json();
+    // Should return: { id: "...", name: "University Name" }
+    ```
+  </Step>
+
+  <Step title="Announce to students">
+    Let students know they can now sign up for Echo with their college email.
+  </Step>
+</Steps>
+
+## Multi-domain colleges
+
+Some colleges use multiple email domains:
+
+<Accordion title="Example scenario">
+  A university might have:
+  - `@students.university.edu` for undergrads
+  - `@grad.university.edu` for graduate students
+  - `@staff.university.edu` for staff
+
+  **Solution**: Create separate college records or implement domain aliases:
+
+  ```typescript
+  // Option 1: Separate communities
+  await db.college.createMany({
+    data: [
+      { name: "University - Undergrad", domain: "students.university.edu" },
+      { name: "University - Graduate", domain: "grad.university.edu" }
+    ]
+  });
+
+  // Option 2: Single community with domain check
+  const validDomains = [
+    'students.university.edu',
+    'grad.university.edu'
+  ];
+  ```
+</Accordion>
+
+## College-wide features
+
+<CardGroup cols={2}>
+  <Card title="Public feed" icon="home">
+    See all public posts from your college community in chronological order.
+  </Card>
+  <Card title="College directory" icon="users">
+    Browse and search all users from your college (respecting privacy settings).
+  </Card>
+  <Card title="Admin announcements" icon="bullhorn">
+    College admins can post announcements visible to all students.
+  </Card>
+  <Card title="Community stats" icon="chart-line">
+    View total users, posts, and activity in your college.
+  </Card>
+</CardGroup>
+
+## Privacy within colleges
+
+Even within your college, privacy is maintained:
+
+<Tabs>
+  <Tab title="Anonymous identity">
+    Other students see:
+    - Your username (not real name)
+    - Your bio (if you added one)
+    - Your college name
+
+    They don't see:
+    - Your email address
+    - Your real name
+    - Any personal identifiers
+  </Tab>
+
+  <Tab title="Private profiles">
+    Set your profile to PRIVATE:
+
+    ```typescript
+    // Even within your college
+    {
+      privacy: "PRIVATE"
+    }
+    ```
+
+    This restricts who can see your posts, even from your own college.
+  </Tab>
+
+  <Tab title="Post privacy">
+    Use post-level privacy:
+
+    ```typescript
+    // Followers only (within college)
+    {
+      privacy: "FOLLOWED"
+    }
+
+    // Mentioned users only (within college)
+    {
+      privacy: "MENTIONED"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Benefits of college isolation
+
+<Steps>
+  <Step title="Relevant content">
+    You only see posts relevant to your college community - no noise from unrelated institutions.
+  </Step>
+
+  <Step title="Shared context">
+    Everyone in your feed shares the context of your college - events, locations, culture, and issues.
+  </Step>
+
+  <Step title="Focused networking">
+    Build connections with people you might actually meet on campus.
+  </Step>
+
+  <Step title="Safety and moderation">
+    Smaller, isolated communities are easier to moderate and keep safe.
+  </Step>
+
+  <Step title="Privacy protection">
+    Your activity isn't visible to random people on the internet - only your verified peers.
+  </Step>
+</Steps>
+
+## Cross-college scenarios
+
+<Warning>
+  Echo does not support cross-college interactions by design.
+</Warning>
+
+**Cannot do:**
+- Follow users from other colleges
+- See posts from other colleges
+- Search for users outside your college
+- Interact with content from other colleges
+
+**Why?**
+- Maintains focused communities
+- Simplifies moderation
+- Protects privacy
+- Prevents spam and abuse
+
+## College-specific customization
+
+Administrators can customize their college's Echo instance:
+
+<Accordion title="Custom branding (optional)">
+  If implementing college-specific branding:
+
+  ```typescript
+  // College-specific config
+  const collegeConfig = {
+    name: "University Name",
+    primaryColor: "#123456",
+    logo: "/colleges/university-logo.png",
+    features: {
+      maxPostLength: 280,
+      allowMedia: true,
+      allowReposts: true
+    }
+  };
+  ```
+</Accordion>
+
+<Accordion title="Admin roles">
+  Colleges can have designated admins:
+
+  ```prisma
+  model User {
+    isAdmin Boolean @default(false)
+    // Admins can:
+    // - Post college-wide announcements
+    // - Moderate content
+    // - Manage users
+  }
+  ```
+
+  Admin announcements:
+  ```typescript
+  // Admin creates public notification
+  await db.notification.create({
+    data: {
+      type: "ADMIN",
+      message: "Campus closed tomorrow due to weather",
+      isPublic: true,
+      senderUserId: adminUserId
+    }
+  });
+  ```
+</Accordion>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="College not found during signup">
+    **Problem**: Email domain isn't recognized
+
+    **Solution**:
+    1. Check you're using your official college email
+    2. Verify the domain is registered in Echo
+    3. Contact your admin to add the college
+  </Accordion>
+
+  <Accordion title="Can't find classmates">
+    **Problem**: Expected users aren't showing up
+
+    **Possibilities**:
+    1. They haven't signed up yet
+    2. They're using a different email domain
+    3. They have private profiles
+    4. Search is case-sensitive (shouldn't be)
+  </Accordion>
+
+  <Accordion title="Seeing wrong college's content">
+    **Problem**: Posts from unexpected college
+
+    **This shouldn't happen** - indicates a bug. Check:
+    1. Your account's collegeId
+    2. Feed filtering logic
+    3. Database relationships
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get started with Echo in your college
+  </Card>
+  <Card title="Privacy settings" icon="shield" href="/features/privacy">
+    Configure privacy within your college
+  </Card>
+  <Card title="Social features" icon="users" href="/features/social">
+    Connect with peers in your college
+  </Card>
+  <Card title="Admin tools" icon="user-gear" href="/security/content-moderation">
+    Learn about moderation and admin features
+  </Card>
+</CardGroup>

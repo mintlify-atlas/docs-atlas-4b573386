@@ -1,0 +1,229 @@
+---
+title: Notifications
+description: Understanding the notification system in Echo
+---
+
+## Overview
+
+The Echo platform automatically generates notifications for user interactions. While there are no dedicated notification retrieval endpoints exposed in the current API, notifications are created in the background when users interact with your content.
+
+## Notification types
+
+The platform supports six types of notifications:
+
+### FOLLOW
+
+Created when someone follows you.
+
+**Example message**: `"@john_doe started following you"`
+
+**Trigger**: `POST /api/follow`
+
+### LIKE
+
+Created when someone likes your post.
+
+**Example message**: `"liked your post"`
+
+**Trigger**: `POST /api/post/toggle/like`
+
+### REPLY
+
+Created when someone replies to your post.
+
+**Example message**: `"replied to your post"`
+
+**Trigger**: `POST /api/post/reply`
+
+### REPOST
+
+Created when someone reposts your content.
+
+**Example message**: `"reposted your post"`
+
+**Trigger**: `POST /api/post/toggle/repost`
+
+### QUOTE
+
+Created when someone quotes your post.
+
+**Example message**: `"quoted your post"`
+
+**Trigger**: `POST /api/post` with `quoteId` parameter
+
+### ADMIN
+
+System-level administrative notifications.
+
+**Example message**: Varies based on admin action
+
+## Notification structure
+
+Notifications contain the following information:
+
+<ResponseField name="id" type="string">
+  Unique notification identifier
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp of notification creation
+</ResponseField>
+
+<ResponseField name="read" type="boolean">
+  Whether the notification has been read (defaults to `false`)
+</ResponseField>
+
+<ResponseField name="type" type="string">
+  Notification type: `FOLLOW`, `LIKE`, `REPLY`, `REPOST`, `QUOTE`, or `ADMIN`
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Human-readable notification message
+</ResponseField>
+
+<ResponseField name="isPublic" type="boolean">
+  Whether the notification is publicly visible (defaults to `false`)
+</ResponseField>
+
+<ResponseField name="senderUserId" type="string">
+  ID of the user who triggered the notification
+</ResponseField>
+
+<ResponseField name="receiverUserId" type="string">
+  ID of the user receiving the notification
+</ResponseField>
+
+<ResponseField name="postId" type="string" optional>
+  ID of the related post (if applicable)
+</ResponseField>
+
+## Automatic notification behavior
+
+### When notifications ARE created
+
+- Following a user (creates `FOLLOW` notification)
+- Liking someone else's post (creates `LIKE` notification)
+- Replying to someone else's post (creates `REPLY` notification)
+- Reposting someone else's post (creates `REPOST` notification)
+- Quoting someone else's post (creates `QUOTE` notification)
+
+### When notifications are NOT created
+
+- Liking your own post
+- Replying to your own post
+- Reposting your own post
+- Quoting your own post
+- Following yourself (this is prevented)
+
+## Notification cleanup
+
+Notifications are automatically deleted when you reverse an action:
+
+### Unliking a post
+
+Deletes the corresponding `LIKE` notification:
+
+```typescript
+await db.notification.deleteMany({
+  where: {
+    postId: validatedData.postId,
+    senderUserId: session.user.id,
+  },
+});
+```
+
+### Undisliking a post
+
+Deletes the corresponding dislike notification.
+
+### Unreposting a post
+
+Deletes the corresponding `REPOST` notification:
+
+```typescript
+await db.notification.deleteMany({
+  where: { 
+    senderUserId: session.user.id, 
+    postId, 
+    type: "REPOST" 
+  },
+});
+```
+
+## Notification relationships
+
+Notifications establish relationships between:
+
+- **Sender**: The user who performed the action
+- **Receiver**: The user receiving the notification
+- **Post**: The post involved in the interaction (if applicable)
+
+These relationships allow for:
+
+- Querying all notifications for a specific user
+- Finding notifications related to a specific post
+- Identifying who triggered each notification
+
+## Database schema
+
+Notifications are stored in the database with the following relationships:
+
+```prisma
+model Notification {
+  id        String           @id @default(cuid())
+  createdAt DateTime         @default(now())
+  read      Boolean          @default(false)
+  type      NotificationType
+  message   String
+  isPublic  Boolean          @default(false)
+
+  senderUserId   String
+  receiverUserId String?
+  senderUser     User    @relation("sender", fields: [senderUserId], references: [id], onDelete: Cascade)
+  receiverUser   User?   @relation("receiver", fields: [receiverUserId], references: [id], onDelete: Cascade)
+
+  postId String?
+  post   Post?   @relation(fields: [postId], references: [id])
+
+  @@index([receiverUserId])
+}
+```
+
+## Future implementation
+
+While notification retrieval endpoints are not currently exposed in the API, you can implement custom queries against the database to:
+
+- Fetch unread notifications for a user
+- Mark notifications as read
+- Filter notifications by type
+- Paginate notification history
+- Get notification counts
+
+### Example query pattern
+
+```typescript
+// Fetch unread notifications for current user
+const notifications = await db.notification.findMany({
+  where: {
+    receiverUserId: session.user.id,
+    read: false
+  },
+  include: {
+    senderUser: {
+      select: {
+        username: true,
+        college: { select: { name: true } }
+      }
+    },
+    post: {
+      select: {
+        id: true,
+        text: true
+      }
+    }
+  },
+  orderBy: {
+    createdAt: 'desc'
+  }
+});
+```

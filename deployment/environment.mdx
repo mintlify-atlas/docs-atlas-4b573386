@@ -1,0 +1,466 @@
+---
+title: Environment variables
+description: Complete reference for all Echo environment variables
+---
+
+## Overview
+
+Echo uses environment variables to configure database connections, authentication, email services, and third-party integrations. This page documents all required and optional variables.
+
+## Required variables
+
+These variables must be set for Echo to function:
+
+### Database
+
+<ParamField path="DATABASE_URL" type="string" required>
+  PostgreSQL connection string
+
+  ```bash
+  DATABASE_URL="postgresql://user:password@host:5432/database?schema=public"
+  ```
+
+  **Format**: `postgresql://[user]:[password]@[host]:[port]/[database]?schema=public`
+
+  **Examples**:
+  - Local: `postgresql://local:1234@localhost:5432/dev?schema=public`
+  - Neon: `postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/echo?sslmode=require`
+  - Supabase: `postgresql://postgres:pass@db.xxx.supabase.co:5432/postgres`
+  - Railway: `postgresql://user:pass@containers-us-west-1.railway.app:7432/railway`
+
+  <Warning>
+    Never commit this value to version control. Use `.env.local` for development.
+  </Warning>
+</ParamField>
+
+### Authentication
+
+<ParamField path="NEXTAUTH_SECRET" type="string" required>
+  Secret key for NextAuth.js session encryption
+
+  ```bash
+  NEXTAUTH_SECRET="your-secret-here"
+  ```
+
+  **Generate**:
+  ```bash
+  openssl rand -base64 32
+  ```
+
+  **Security**:
+  - Must be at least 32 characters
+  - Should be cryptographically random
+  - Rotate periodically in production
+  - Never share or expose this value
+
+  <Tip>
+    Use different secrets for development and production.
+  </Tip>
+</ParamField>
+
+<ParamField path="NEXTAUTH_URL" type="string" required>
+  Base URL of your application
+
+  ```bash
+  # Development
+  NEXTAUTH_URL="http://localhost:3000"
+
+  # Production
+  NEXTAUTH_URL="https://echo.yourdomain.com"
+  ```
+
+  **Important**:
+  - Must match your actual domain
+  - Include protocol (`http://` or `https://`)
+  - No trailing slash
+  - Update when changing domains
+</ParamField>
+
+<ParamField path="AUTH_SALT" type="string" required>
+  Salt for user credential hashing
+
+  ```bash
+  AUTH_SALT="your-auth-salt"
+  ```
+
+  **Generate**:
+  ```bash
+  openssl rand -hex 32
+  ```
+
+  <Warning>
+    **Critical**: Never change this value after users sign up, or they won't be able to log in. If you must change it, you'll need to migrate all user hashes.
+  </Warning>
+
+  **Purpose**: Used in `generateUserHash()` to create unique user identifiers from email + password combinations.
+</ParamField>
+
+### Redis (Rate Limiting)
+
+<ParamField path="UPSTASH_REDIS_REST_URL" type="string" required>
+  Upstash Redis REST API URL
+
+  ```bash
+  UPSTASH_REDIS_REST_URL="https://your-redis-instance.upstash.io"
+  ```
+
+  **Get this from**:
+  1. Create account at [upstash.com](https://upstash.com)
+  2. Create a Redis database
+  3. Copy the REST URL from dashboard
+
+  **Used for**:
+  - API rate limiting
+  - Upload rate limiting
+  - Spam prevention
+</ParamField>
+
+<ParamField path="UPSTASH_REDIS_REST_TOKEN" type="string" required>
+  Upstash Redis authentication token
+
+  ```bash
+  UPSTASH_REDIS_REST_TOKEN="your-redis-token"
+  ```
+
+  Found in the same Upstash dashboard as the URL.
+
+  <Info>
+    Upstash offers a generous free tier suitable for development and small deployments.
+  </Info>
+</ParamField>
+
+### Email Service
+
+<ParamField path="RESEND_API_KEY" type="string" required>
+  Resend API key for sending verification emails
+
+  ```bash
+  RESEND_API_KEY="re_123456789"
+  ```
+
+  **Get this from**:
+  1. Create account at [resend.com](https://resend.com)
+  2. Verify your sending domain
+  3. Generate API key in dashboard
+
+  **Used for**:
+  - Email verification during signup
+  - Password reset emails (if implemented)
+  - Admin notifications (if implemented)
+
+  <Tip>
+    Resend's free tier includes 100 emails/day, perfect for testing.
+  </Tip>
+</ParamField>
+
+### Public URL
+
+<ParamField path="NEXT_PUBLIC_URL" type="string" required>
+  Public-facing URL of your application
+
+  ```bash
+  NEXT_PUBLIC_URL="http://localhost:3000"  # Development
+  NEXT_PUBLIC_URL="https://echo.app"       # Production
+  ```
+
+  **Note**: The `NEXT_PUBLIC_` prefix makes this available to client-side code.
+
+  **Used for**:
+  - Email verification links
+  - Social sharing
+  - API callbacks
+</ParamField>
+
+## Optional variables
+
+These variables enable additional features:
+
+### Blob Storage
+
+<ParamField path="BLOB_READ_WRITE_TOKEN" type="string">
+  Vercel Blob storage token for media uploads
+
+  ```bash
+  BLOB_READ_WRITE_TOKEN="vercel_blob_rw_..."
+  ```
+
+  **Get this from**:
+  - Vercel Project Settings → Storage → Blob → Create Token
+
+  **Alternative**: Configure AWS S3 or other blob storage
+
+  <Note>
+    If not using Vercel Blob, you'll need to modify the upload implementation in `app/api/upload/route.ts`.
+  </Note>
+</ParamField>
+
+### Analytics
+
+<ParamField path="NEXT_PUBLIC_ANALYTICS_ID" type="string">
+  Google Analytics or Vercel Analytics ID
+
+  ```bash
+  NEXT_PUBLIC_ANALYTICS_ID="G-XXXXXXXXXX"  # Google Analytics
+  ```
+
+  Optional for usage tracking and insights.
+</ParamField>
+
+## Development vs Production
+
+Use different environment files:
+
+<Tabs>
+  <Tab title="Development (.env.local)">
+    ```bash .env.local
+    # Local PostgreSQL
+    DATABASE_URL="postgresql://local:1234@localhost:5432/dev?schema=public"
+
+    # Development URLs
+    NEXTAUTH_URL="http://localhost:3000"
+    NEXT_PUBLIC_URL="http://localhost:3000"
+
+    # Use test/dev keys
+    NEXTAUTH_SECRET="dev-secret-change-in-production"
+    AUTH_SALT="dev-salt-change-in-production"
+
+    # Free tier services
+    RESEND_API_KEY="re_dev_..."
+    UPSTASH_REDIS_REST_URL="https://dev-redis.upstash.io"
+    UPSTASH_REDIS_REST_TOKEN="dev_token"
+    ```
+  </Tab>
+
+  <Tab title="Production (.env.production)">
+    ```bash .env.production
+    # Managed PostgreSQL
+    DATABASE_URL="postgresql://prod:strongpass@prod-db.provider.com:5432/echo?sslmode=require"
+
+    # Production URLs
+    NEXTAUTH_URL="https://echo.yourdomain.com"
+    NEXT_PUBLIC_URL="https://echo.yourdomain.com"
+
+    # Strong, unique secrets
+    NEXTAUTH_SECRET="[generated-with-openssl-rand-base64-32]"
+    AUTH_SALT="[generated-with-openssl-rand-hex-32]"
+
+    # Production API keys
+    RESEND_API_KEY="re_prod_..."
+    UPSTASH_REDIS_REST_URL="https://prod-redis.upstash.io"
+    UPSTASH_REDIS_REST_TOKEN="prod_token"
+
+    # Blob storage
+    BLOB_READ_WRITE_TOKEN="vercel_blob_rw_..."
+    ```
+  </Tab>
+
+  <Tab title="Example (.env.example)">
+    Commit this to version control as a template:
+
+    ```bash .env.example
+    # Database URL for PostgreSQL
+    DATABASE_URL="postgresql://local:1234@localhost:5432/dev?schema=public"
+
+    # NextAuth Configuration
+    NEXTAUTH_SECRET="your-secret-here"
+    NEXTAUTH_URL="http://localhost:3000"
+
+    # Email Service (Resend)
+    RESEND_API_KEY="your-resend-api-key"
+
+    # Redis Configuration (Upstash)
+    UPSTASH_REDIS_REST_URL="your-redis-url"
+    UPSTASH_REDIS_REST_TOKEN="your-redis-token"
+
+    # Authentication Salt
+    AUTH_SALT="your-auth-salt"
+
+    # Public URL
+    NEXT_PUBLIC_URL="http://localhost:3000"
+    ```
+  </Tab>
+</Tabs>
+
+## Environment variable loading
+
+Next.js loads environment variables in this order:
+
+1. `.env.local` (local overrides, not committed)
+2. `.env.production` or `.env.development` (based on NODE_ENV)
+3. `.env` (committed defaults)
+
+<CodeGroup>
+```bash .gitignore
+# Environment files
+.env
+.env.local
+.env*.local
+.env.production
+
+# Only commit .env.example
+```
+
+```typescript Access in Code
+// Server-side (API routes, server components)
+const dbUrl = process.env.DATABASE_URL;
+const secret = process.env.NEXTAUTH_SECRET;
+
+// Client-side (only NEXT_PUBLIC_* vars)
+const publicUrl = process.env.NEXT_PUBLIC_URL;
+```
+</CodeGroup>
+
+## Vercel deployment
+
+Add environment variables in Vercel dashboard:
+
+<Steps>
+  <Step title="Navigate to settings">
+    Project → Settings → Environment Variables
+  </Step>
+
+  <Step title="Add variables">
+    For each variable:
+    1. Enter key (e.g., `DATABASE_URL`)
+    2. Enter value
+    3. Select environments (Production, Preview, Development)
+    4. Click **Save**
+  </Step>
+
+  <Step title="Redeploy">
+    Changes to environment variables require a redeploy:
+
+    ```bash
+    vercel --prod
+    ```
+
+    Or trigger via git push.
+  </Step>
+</Steps>
+
+<Warning>
+  Environment variables are encrypted at rest in Vercel, but anyone with project access can view them.
+</Warning>
+
+## Security best practices
+
+<CardGroup cols={2}>
+  <Card title="Never commit secrets" icon="ban">
+    Add `.env*` to `.gitignore`. Only commit `.env.example` with placeholder values.
+  </Card>
+  <Card title="Rotate regularly" icon="rotate">
+    Change secrets periodically, especially `NEXTAUTH_SECRET` and API keys.
+  </Card>
+  <Card title="Use different values" icon="copy">
+    Development and production should have completely different secrets.
+  </Card>
+  <Card title="Limit access" icon="lock">
+    Only give production credentials to trusted team members.
+  </Card>
+</CardGroup>
+
+## Validation
+
+Validate environment variables at build time:
+
+```typescript lib/env.ts
+import { z } from 'zod';
+
+const envSchema = z.object({
+  DATABASE_URL: z.string().url(),
+  NEXTAUTH_SECRET: z.string().min(32),
+  NEXTAUTH_URL: z.string().url(),
+  AUTH_SALT: z.string().min(32),
+  RESEND_API_KEY: z.string().startsWith('re_'),
+  UPSTASH_REDIS_REST_URL: z.string().url(),
+  UPSTASH_REDIS_REST_TOKEN: z.string(),
+  NEXT_PUBLIC_URL: z.string().url(),
+});
+
+// Validate at startup
+export const env = envSchema.parse(process.env);
+```
+
+Use in your code:
+
+```typescript
+import { env } from '@/lib/env';
+
+const db = new PrismaClient({
+  datasources: {
+    db: { url: env.DATABASE_URL },
+  },
+});
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Environment variables not loading">
+    **Check**:
+    1. File name is correct (`.env.local`, not `.env.txt`)
+    2. File is in project root directory
+    3. Variables don't have quotes (unless value contains spaces)
+    4. Restart dev server after changes
+
+    ```bash
+    # Stop server
+    # Update .env.local
+    # Restart
+    bun run dev
+    ```
+  </Accordion>
+
+  <Accordion title="Client-side variables undefined">
+    **Cause**: Client-side code can only access `NEXT_PUBLIC_*` variables
+
+    **Fix**: Rename variable or access server-side only
+
+    ```typescript
+    // ❌ Won't work client-side
+    const secret = process.env.NEXTAUTH_SECRET;
+
+    // ✅ Works client-side
+    const url = process.env.NEXT_PUBLIC_URL;
+    ```
+  </Accordion>
+
+  <Accordion title="Variables work locally but not in production">
+    **Check**:
+    1. Variables are set in deployment platform (Vercel, etc.)
+    2. Spelling is correct
+    3. Values don't have extra spaces/quotes
+    4. Redeployed after adding variables
+  </Accordion>
+</AccordionGroup>
+
+## Quick reference
+
+| Variable | Required | Purpose | Example |
+|----------|----------|---------|----------|
+| `DATABASE_URL` | ✅ | PostgreSQL connection | `postgresql://...` |
+| `NEXTAUTH_SECRET` | ✅ | Session encryption | `openssl rand -base64 32` |
+| `NEXTAUTH_URL` | ✅ | App base URL | `https://echo.app` |
+| `AUTH_SALT` | ✅ | User hash salt | `openssl rand -hex 32` |
+| `RESEND_API_KEY` | ✅ | Email service | `re_123...` |
+| `UPSTASH_REDIS_REST_URL` | ✅ | Redis URL | `https://...upstash.io` |
+| `UPSTASH_REDIS_REST_TOKEN` | ✅ | Redis token | `AXX...` |
+| `NEXT_PUBLIC_URL` | ✅ | Public URL | `https://echo.app` |
+| `BLOB_READ_WRITE_TOKEN` | ❌ | Media storage | `vercel_blob_...` |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Deployment guide" icon="rocket" href="/deployment/setup">
+    Deploy Echo to production
+  </Card>
+  <Card title="Database setup" icon="database" href="/deployment/database">
+    Configure PostgreSQL and Prisma
+  </Card>
+  <Card title="Security" icon="shield" href="/security/authentication">
+    Secure your environment
+  </Card>
+  <Card title="Rate limiting" icon="gauge" href="/security/rate-limiting">
+    Configure Upstash Redis
+  </Card>
+</CardGroup>

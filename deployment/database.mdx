@@ -1,0 +1,708 @@
+---
+title: Database setup
+description: Configure PostgreSQL and Prisma for Echo
+---
+
+## Overview
+
+Echo uses PostgreSQL as its primary database and Prisma as the ORM. This guide covers database setup, migrations, and management.
+
+## Database schema
+
+Echo's database consists of several core models:
+
+```mermaid
+erDiagram
+    User ||--o{ Post : creates
+    User ||--o{ Like : gives
+    User ||--o{ Dislike : gives
+    User ||--o{ Repost : makes
+    User }o--o{ User : follows
+    User }o--|| College : "belongs to"
+    Post ||--o{ Post : "has replies"
+    Post ||--o{ Like : receives
+    Post ||--o{ Dislike : receives
+    Post ||--o{ Repost : receives
+    Post ||--o{ Notification : generates
+    User ||--o{ Notification : "sends/receives"
+```
+
+## Prisma schema reference
+
+<Accordion title="Complete schema.prisma">
+```prisma prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                    String          @id @default(cuid())
+  createdAt             DateTime        @default(now()) @map(name: "created_at")
+  updatedAt             DateTime        @default(now()) @map(name: "updated_at")
+  userHash              String          @unique
+  collegeId             String
+  college               College         @relation(fields: [collegeId], references: [id])
+  username              String          @unique
+  bio                   String?
+  privacy               Privacy         @default(PUBLIC)
+  followers             User[]          @relation(name: "followers")
+  following             User[]          @relation(name: "followers")
+  posts                 Post[]
+  likedPosts            Like[]
+  isAdmin               Boolean         @default(false) @map(name: "is_admin")
+  reposts               Repost[]
+  reportedPosts         Report[]        @relation("reportedUser")
+  reportedByPosts       Report[]        @relation("reporter")
+  senderNotifications   Notification[]  @relation("sender")
+  receiverNotifications Notification[]  @relation("receiver")
+  Authenticator         Authenticator[]
+  Dislike               Dislike[]
+
+  @@unique([createdAt, id])
+  @@index([collegeId, username, userHash])
+}
+
+model College {
+  id        String   @id @default(cuid())
+  name      String
+  domain    String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  User      User[]
+
+  @@index([name, domain])
+}
+
+enum Privacy {
+  PUBLIC
+  PRIVATE
+}
+
+model Post {
+  id           String         @id @default(cuid())
+  createdAt    DateTime       @default(now())
+  author       User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  authorId     String
+  text         String
+  media        String[]
+  likes        Like[]
+  dislikes     Dislike[]
+  parentPostId String?
+  parentPost   Post?          @relation("rootPost", fields: [parentPostId], references: [id], onDelete: Cascade)
+  replies      Post[]         @relation("rootPost")
+  notification Notification[]
+  reposts      Repost[]
+  quoteId      String?
+  privacy      PostPrivacy    @default(ANYONE)
+  reports      Report[]
+
+  @@unique([createdAt, id])
+  @@index([authorId])
+}
+
+model Like {
+  createdAt DateTime @default(now())
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+
+  @@id([postId, userId])
+  @@index([userId])
+  @@index([postId])
+}
+
+model Dislike {
+  createdAt DateTime @default(now())
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+
+  @@id([postId, userId])
+  @@index([userId])
+  @@index([postId])
+}
+
+model Repost {
+  createdAt DateTime @default(now())
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+
+  @@id([postId, userId])
+  @@index([userId])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  createdAt DateTime         @default(now())
+  read      Boolean          @default(false)
+  type      NotificationType
+  message   String
+  isPublic  Boolean          @default(false)
+
+  senderUserId   String
+  receiverUserId String?
+  senderUser     User    @relation("sender", fields: [senderUserId], references: [id], onDelete: Cascade)
+  receiverUser   User?   @relation("receiver", fields: [receiverUserId], references: [id], onDelete: Cascade)
+
+  postId String?
+  post   Post?   @relation(fields: [postId], references: [id])
+
+  @@index([receiverUserId])
+}
+
+enum NotificationType {
+  ADMIN
+  LIKE
+  REPLY
+  FOLLOW
+  REPOST
+  QUOTE
+}
+
+enum PostPrivacy {
+  FOLLOWED
+  ANYONE
+  MENTIONED
+}
+
+model Report {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now())
+  reason       String
+  post         Post?    @relation(fields: [postId], references: [id])
+  postId       String?
+  user         User?    @relation("reportedUser", fields: [userId], references: [id])
+  userId       String?
+  reportedBy   User     @relation("reporter", fields: [reportedById], references: [id])
+  reportedById String
+
+  @@index([reportedById])
+}
+
+model Authenticator {
+  credentialID         String  @unique
+  userId               String
+  providerAccountId    String
+  credentialPublicKey  String
+  counter              Int
+  credentialDeviceType String
+  credentialBackedUp   Boolean
+  transports           String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, credentialID])
+}
+```
+</Accordion>
+
+## PostgreSQL setup
+
+Choose a PostgreSQL hosting option:
+
+<Tabs>
+  <Tab title="Neon (Recommended)">
+    Neon provides serverless PostgreSQL with auto-scaling:
+
+    <Steps>
+      <Step title="Create account">
+        Sign up at [neon.tech](https://neon.tech)
+      </Step>
+
+      <Step title="Create database">
+        1. Click **New Project**
+        2. Choose region closest to your users
+        3. Name your project (e.g., "Echo")
+        4. Click **Create Project**
+      </Step>
+
+      <Step title="Get connection string">
+        Copy the connection string from dashboard:
+
+        ```bash
+        DATABASE_URL="postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/echo?sslmode=require"
+        ```
+      </Step>
+
+      <Step title="Configure pooling (optional)">
+        For better performance, use Neon's connection pooling:
+
+        ```bash
+        # Pooled connection (recommended)
+        DATABASE_URL="postgresql://user:pass@ep-xxx-pooler.us-east-2.aws.neon.tech/echo?sslmode=require"
+        ```
+      </Step>
+    </Steps>
+
+    <Tip>
+      Neon's free tier includes 0.5 GB storage and 300 hours of compute, perfect for development.
+    </Tip>
+  </Tab>
+
+  <Tab title="Supabase">
+    Supabase provides PostgreSQL with additional features:
+
+    1. Create project at [supabase.com](https://supabase.com)
+    2. Go to Project Settings → Database
+    3. Copy connection string:
+
+    ```bash
+    DATABASE_URL="postgresql://postgres:password@db.xxx.supabase.co:5432/postgres"
+    ```
+
+    **Benefits**:
+    - Built-in auth (though Echo uses NextAuth)
+    - Realtime subscriptions
+    - Storage for media (alternative to Vercel Blob)
+  </Tab>
+
+  <Tab title="Railway">
+    Railway offers simple PostgreSQL provisioning:
+
+    ```bash
+    # Install Railway CLI
+    npm install -g @railway/cli
+
+    # Login and create project
+    railway login
+    railway init
+
+    # Add PostgreSQL
+    railway add postgresql
+
+    # Get connection string
+    railway variables
+    ```
+
+    Connection string format:
+    ```bash
+    DATABASE_URL="postgresql://user:pass@containers-us-west-1.railway.app:7432/railway"
+    ```
+  </Tab>
+
+  <Tab title="Local (Development)">
+    For local development:
+
+    ```bash
+    # macOS (Homebrew)
+    brew install postgresql@16
+    brew services start postgresql@16
+
+    # Ubuntu/Debian
+    sudo apt-get install postgresql-16
+    sudo systemctl start postgresql
+
+    # Create database
+    createdb echo_dev
+
+    # Connection string
+    DATABASE_URL="postgresql://localhost:5432/echo_dev"
+    ```
+
+    Or use Docker:
+
+    ```yaml docker-compose.yml
+    version: '3.8'
+    services:
+      db:
+        image: postgres:16-alpine
+        environment:
+          POSTGRES_DB: echo
+          POSTGRES_USER: local
+          POSTGRES_PASSWORD: password
+        ports:
+          - "5432:5432"
+        volumes:
+          - postgres_data:/var/lib/postgresql/data
+
+    volumes:
+      postgres_data:
+    ```
+
+    ```bash
+    docker-compose up -d
+    ```
+  </Tab>
+</Tabs>
+
+## Prisma setup
+
+<Steps>
+  <Step title="Install Prisma">
+    ```bash
+    bun add @prisma/client
+    bun add -d prisma
+    ```
+  </Step>
+
+  <Step title="Set DATABASE_URL">
+    Add to `.env.local`:
+
+    ```bash
+    DATABASE_URL="postgresql://..."
+    ```
+  </Step>
+
+  <Step title="Generate Prisma Client">
+    ```bash
+    bunx prisma generate
+    ```
+
+    This creates the Prisma Client based on your schema.
+  </Step>
+
+  <Step title="Run migrations">
+    ```bash
+    # Development: Create and apply migration
+    bunx prisma migrate dev --name init
+
+    # Production: Apply migrations only
+    bunx prisma migrate deploy
+    ```
+  </Step>
+</Steps>
+
+## Database client setup
+
+Create a singleton Prisma Client instance:
+
+```typescript lib/db.ts
+import { PrismaClient } from '@prisma/client';
+
+const globalForPrisma = global as unknown as {
+  prisma: PrismaClient | undefined;
+};
+
+export const db =
+  globalForPrisma.prisma ??
+  new PrismaClient({
+    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+  });
+
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
+```
+
+**Usage**:
+
+```typescript
+import { db } from '@/lib/db';
+
+const users = await db.user.findMany();
+```
+
+## Migrations
+
+<Tabs>
+  <Tab title="Create migration">
+    ```bash
+    # Create a new migration
+    bunx prisma migrate dev --name add_bio_field
+    ```
+
+    This:
+    1. Compares schema to database
+    2. Creates SQL migration file
+    3. Applies migration to database
+    4. Regenerates Prisma Client
+  </Tab>
+
+  <Tab title="Apply migrations">
+    ```bash
+    # Production: Apply pending migrations
+    bunx prisma migrate deploy
+    ```
+
+    Safe for production - only applies, doesn't create migrations.
+  </Tab>
+
+  <Tab title="Reset database">
+    ```bash
+    # ⚠️ Deletes all data!
+    bunx prisma migrate reset
+    ```
+
+    Use only in development to start fresh.
+  </Tab>
+
+  <Tab title="View migration status">
+    ```bash
+    bunx prisma migrate status
+    ```
+
+    Shows applied and pending migrations.
+  </Tab>
+</Tabs>
+
+## Seeding data
+
+Seed initial colleges and test data:
+
+<CodeGroup>
+```typescript prisma/seed.ts
+import { PrismaClient } from '@prisma/client';
+const prisma = new PrismaClient();
+
+async function main() {
+  // Seed colleges
+  const colleges = await prisma.college.createMany({
+    data: [
+      { name: 'University of Example', domain: 'example.edu' },
+      { name: 'State College', domain: 'state.edu' },
+      { name: 'Tech Institute', domain: 'tech.edu' },
+    ],
+    skipDuplicates: true,
+  });
+
+  console.log(`Seeded ${colleges.count} colleges`);
+
+  // Optional: Create test admin user
+  // (Requires generating userHash with actual credentials)
+}
+
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
+```
+
+```json package.json
+{
+  "scripts": {
+    "prisma:seed": "bun prisma/seed.ts"
+  },
+  "prisma": {
+    "seed": "bun prisma/seed.ts"
+  }
+}
+```
+</CodeGroup>
+
+Run seed:
+
+```bash
+bun run prisma:seed
+```
+
+## Prisma Studio
+
+Visual database browser:
+
+```bash
+bunx prisma studio
+```
+
+Opens at `http://localhost:5555` - browse and edit data visually.
+
+<Warning>
+  Don't use Prisma Studio on production databases - use read-only replicas instead.
+</Warning>
+
+## Database management
+
+<Accordion title="Backup database">
+  ```bash
+  # PostgreSQL dump
+  pg_dump $DATABASE_URL > backup-$(date +%Y%m%d).sql
+
+  # Compressed backup
+  pg_dump $DATABASE_URL | gzip > backup-$(date +%Y%m%d).sql.gz
+
+  # Restore from backup
+  psql $DATABASE_URL < backup-20240101.sql
+  ```
+
+  **Automate backups**:
+  ```bash crontab
+  # Daily backup at 2 AM
+  0 2 * * * pg_dump $DATABASE_URL | gzip > /backups/echo-$(date +\%Y\%m\%d).sql.gz
+  ```
+</Accordion>
+
+<Accordion title="Monitor database size">
+  ```sql
+  -- Check database size
+  SELECT pg_size_pretty(pg_database_size('echo'));
+
+  -- Check table sizes
+  SELECT
+    schemaname,
+    tablename,
+    pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
+  FROM pg_tables
+  WHERE schemaname = 'public'
+  ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
+  ```
+</Accordion>
+
+<Accordion title="Optimize performance">
+  ```sql
+  -- Analyze tables for query optimization
+  ANALYZE;
+
+  -- Vacuum to reclaim storage
+  VACUUM;
+
+  -- Full vacuum (locks tables)
+  VACUUM FULL;
+
+  -- Reindex
+  REINDEX DATABASE echo;
+  ```
+
+  **Automated** (PostgreSQL does this automatically, but you can tune):
+  ```sql
+  ALTER TABLE "Post" SET (autovacuum_vacuum_scale_factor = 0.1);
+  ```
+</Accordion>
+
+<Accordion title="Connection pooling">
+  For high-traffic deployments, use PgBouncer:
+
+  ```bash
+  # Docker
+  docker run -d \
+    --name pgbouncer \
+    -p 6432:6432 \
+    -e DATABASE_URL="postgresql://..." \
+    edoburu/pgbouncer
+
+  # Then connect to pgbouncer instead of postgres
+  DATABASE_URL="postgresql://localhost:6432/echo"
+  ```
+
+  Or use platform-provided pooling:
+  - Neon: Built-in pooling endpoint
+  - Supabase: Supavisor connection pooler
+  - Railway: Connection pooling option
+</Accordion>
+
+## Querying best practices
+
+<CodeGroup>
+```typescript Efficient Queries
+// ✅ Select only needed fields
+const posts = await db.post.findMany({
+  select: {
+    id: true,
+    text: true,
+    createdAt: true,
+    author: {
+      select: {
+        username: true,
+      },
+    },
+  },
+});
+
+// ❌ Avoid selecting everything
+const posts = await db.post.findMany({
+  include: { author: true }, // Includes all author fields
+});
+```
+
+```typescript Use Indexes
+// ✅ Query on indexed fields
+const user = await db.user.findUnique({
+  where: { username: 'johndoe' }, // username is @unique
+});
+
+// ✅ Compound index query
+const user = await db.user.findFirst({
+  where: {
+    collegeId: 'college_id',
+    username: 'johndoe',
+  },
+});
+```
+
+```typescript Pagination
+// ✅ Cursor-based pagination
+const posts = await db.post.findMany({
+  take: 20,
+  skip: 1,
+  cursor: { id: lastPostId },
+  orderBy: { createdAt: 'desc' },
+});
+
+// ❌ Offset pagination (slow for large datasets)
+const posts = await db.post.findMany({
+  take: 20,
+  skip: 100, // Gets slow with large offsets
+});
+```
+</CodeGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Connection timeout">
+    ```
+    Error: Can't reach database server at `host:5432`
+    ```
+
+    **Fixes**:
+    1. Check `DATABASE_URL` is correct
+    2. Verify database is running
+    3. Check firewall/security groups
+    4. Ensure SSL mode if required: `?sslmode=require`
+  </Accordion>
+
+  <Accordion title="Migration conflicts">
+    ```
+    Error: Migration `xxx` failed to apply
+    ```
+
+    **Fixes**:
+    ```bash
+    # Check migration status
+    bunx prisma migrate status
+
+    # Resolve manually or reset (dev only!)
+    bunx prisma migrate reset
+
+    # Mark migration as applied (if already applied manually)
+    bunx prisma migrate resolve --applied xxx
+    ```
+  </Accordion>
+
+  <Accordion title="Prisma Client out of sync">
+    ```
+    Error: Unknown field `newField`
+    ```
+
+    **Fix**: Regenerate client after schema changes
+    ```bash
+    bunx prisma generate
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Environment setup" icon="gear" href="/deployment/environment">
+    Configure database connection string
+  </Card>
+  <Card title="Deployment guide" icon="rocket" href="/deployment/setup">
+    Deploy with database migrations
+  </Card>
+  <Card title="Security" icon="shield" href="/security/authentication">
+    Secure database access
+  </Card>
+  <Card title="Rate limiting" icon="gauge" href="/security/rate-limiting">
+    Configure Redis for rate limits
+  </Card>
+</CardGroup>

@@ -1,0 +1,123 @@
+---
+title: Introduction
+description: Welcome to Echo - an anonymous micro-blogging platform for college communities
+---
+
+<img
+  className="block dark:hidden"
+  src="/images/hero-light.svg"
+  alt="Echo Hero Light"
+/>
+<img
+  className="hidden dark:block"
+  src="/images/hero-dark.svg"
+  alt="Echo Hero Dark"
+/>
+
+## What is Echo?
+
+Echo is an anonymous micro-blogging platform designed specifically for college communities. Built with Next.js 15, it provides a safe space for students to share thoughts, connect with peers, and engage in meaningful conversations without revealing their identity.
+
+### Key features
+
+<CardGroup cols={2}>
+  <Card
+    title="Anonymous by design"
+    icon="mask"
+    href="/features/privacy"
+  >
+    Post, reply, and interact without revealing your real identity. Your privacy is protected by cryptographic hashing.
+  </Card>
+  <Card
+    title="College communities"
+    icon="school"
+    href="/features/colleges"
+  >
+    Connect with students from your college using verified email domains. Each college has its own isolated community.
+  </Card>
+  <Card
+    title="Rich social features"
+    icon="heart"
+    href="/features/social"
+  >
+    Like, dislike, repost, reply, and follow other users. Build your network within your college community.
+  </Card>
+  <Card
+    title="Content moderation"
+    icon="shield-check"
+    href="/security/content-moderation"
+  >
+    AI-powered NSFW detection and community reporting keep the platform safe and appropriate.
+  </Card>
+</CardGroup>
+
+## Technology stack
+
+Echo is built with modern web technologies:
+
+- **Framework**: Next.js 15 with App Router and React 19
+- **Database**: PostgreSQL with Prisma ORM
+- **Authentication**: NextAuth.js with credential-based auth
+- **Styling**: Tailwind CSS with Radix UI components
+- **State Management**: Zustand and TanStack Query
+- **Rate Limiting**: Upstash Redis
+- **Media Storage**: Vercel Blob
+- **Content Safety**: TensorFlow.js with NSFWJS
+
+## Getting started
+
+<CardGroup cols={2}>
+  <Card
+    title="Quickstart guide"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Set up your account and create your first post in minutes
+  </Card>
+  <Card
+    title="Authentication"
+    icon="key"
+    href="/authentication"
+  >
+    Learn how Echo's authentication system works
+  </Card>
+  <Card
+    title="Deployment"
+    icon="server"
+    href="/deployment/setup"
+  >
+    Deploy Echo to production with Vercel or your own infrastructure
+  </Card>
+  <Card
+    title="Security"
+    icon="lock"
+    href="/security/authentication"
+  >
+    Understand Echo's security features and best practices
+  </Card>
+</CardGroup>
+
+## Why Echo?
+
+College students often want to share thoughts, ask questions, or discuss topics without fear of judgment or identification. Echo provides:
+
+- **True anonymity**: Unlike other platforms, Echo uses cryptographic hashing to ensure your identity remains private
+- **College-specific**: Only students with verified college emails can join their community
+- **Safe environment**: Built-in content moderation and reporting tools
+- **Modern experience**: Fast, responsive, and mobile-friendly interface
+
+<Note>
+  Echo is designed for educational purposes and to foster positive community engagement. All users are expected to follow community guidelines and use the platform responsibly.
+</Note>
+
+## Open source
+
+Echo is open source and available for self-hosting. You can customize it for your institution, contribute improvements, or learn from the codebase.
+
+<Card
+  title="View on GitHub"
+  icon="github"
+  href="https://github.com/yourusername/echo"
+>
+  Star the repository and contribute to the project
+</Card>
