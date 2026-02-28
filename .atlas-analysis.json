@@ -1,0 +1,107 @@
+{
+  "projectType": "saas",
+  "projectName": "Echo",
+  "projectDescription": "Anonymous micro-blogging platform for college communities to share thoughts and ideas",
+  "theme": "palm",
+  "primaryColor": "#6366f1",
+  "lightColor": "#818cf8",
+  "darkColor": "#4f46e5",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "authentication"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/posts",
+              "features/social",
+              "features/privacy",
+              "features/colleges",
+              "features/notifications"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/setup",
+              "deployment/environment",
+              "deployment/database"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/authentication",
+              "security/content-moderation",
+              "security/rate-limiting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/posts",
+              "api/users",
+              "api/colleges",
+              "api/notifications",
+              "api/search"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Anonymous posting with college verification",
+    "Social interactions (likes, dislikes, reposts, replies)",
+    "Privacy controls and content moderation",
+    "Real-time notifications",
+    "NSFW content detection",
+    "Rate limiting and spam prevention",
+    "Passkey authentication",
+    "College-based communities"
+  ],
+  "publicApiSurface": [
+    "POST /api/post - Create a post",
+    "DELETE /api/post - Delete a post",
+    "POST /api/post/reply - Reply to a post",
+    "POST /api/post/toggle/like - Toggle post like",
+    "POST /api/post/toggle/dislike - Toggle post dislike",
+    "POST /api/post/toggle/repost - Toggle repost",
+    "GET /api/posts - Get feed posts",
+    "GET /api/post/[id]/thread - Get post thread",
+    "GET /api/post/[id]/replies - Get post replies",
+    "POST /api/follow - Follow/unfollow user",
+    "GET /api/follow/is - Check follow status",
+    "GET /api/profile/[handle] - Get user profile",
+    "POST /api/profile/[handle]/edit - Edit profile",
+    "GET /api/profile/[handle]/posts - Get user posts",
+    "GET /api/profile/[handle]/replies - Get user replies",
+    "GET /api/profile/[handle]/reposts - Get user reposts",
+    "POST /api/profile/report - Report user",
+    "GET /api/college/[id] - Get college info",
+    "GET /api/search - Search users and posts",
+    "POST /api/auth/signup - Sign up user",
+    "GET /api/checkUserNameAvailability - Check username"
+  ]
+}
