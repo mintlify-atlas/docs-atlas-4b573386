@@ -1,0 +1,196 @@
+---
+title: Media
+description: Upload and manage media files for posts
+---
+
+## Upload media
+
+`POST /api/upload`
+
+Upload media files to Vercel Blob storage for use in posts.
+
+### Authentication
+
+Required. You must be authenticated to upload files.
+
+### Rate limiting
+
+27 requests per minute per user.
+
+### Request body
+
+Multipart form data with the following fields:
+
+<ParamField body="file" type="File" required>
+  The file to upload (image or video)
+</ParamField>
+
+<ParamField body="filename" type="string" required>
+  The filename for the uploaded file
+</ParamField>
+
+### Response
+
+<ResponseField name="url" type="string">
+  Public URL of the uploaded file
+</ResponseField>
+
+<ResponseField name="downloadUrl" type="string">
+  Direct download URL
+</ResponseField>
+
+<ResponseField name="pathname" type="string">
+  File path in blob storage
+</ResponseField>
+
+<ResponseField name="contentType" type="string">
+  MIME type of the uploaded file
+</ResponseField>
+
+<ResponseField name="contentDisposition" type="string">
+  Content disposition header value
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X POST 'https://your-domain.com/api/upload' \
+  -H 'Cookie: next-auth.session-token=YOUR_SESSION_TOKEN' \
+  -F 'file=@image.jpg' \
+  -F 'filename=my-image.jpg'
+```
+
+### Example response
+
+```json
+{
+  "url": "https://blob.vercel-storage.com/abc123.jpg",
+  "downloadUrl": "https://blob.vercel-storage.com/abc123.jpg?download=1",
+  "pathname": "my-image.jpg",
+  "contentType": "image/jpeg",
+  "contentDisposition": "inline; filename=\"my-image.jpg\""
+}
+```
+
+### Behavior
+
+- Files are stored in Vercel Blob with public access
+- Uploaded files can be attached to posts via the `media` array
+- NSFW detection is performed client-side before upload
+- Files are automatically optimized and served via CDN
+
+### Error responses
+
+<CodeGroup>
+```json 400 - No file provided
+{
+  "error": "No file provided"
+}
+```
+
+```json 401 - Unauthorized
+{
+  "error": "Unauthorized"
+}
+```
+
+```json 429 - Rate limit exceeded
+{
+  "error": "Rate limit exceeded",
+  "resetAt": "2024-01-01T12:00:00.000Z"
+}
+```
+
+```json 500 - Upload failed
+{
+  "error": "Error uploading file"
+}
+```
+</CodeGroup>
+
+---
+
+## Delete media
+
+`POST /api/upload/delete`
+
+Delete a previously uploaded media file from Vercel Blob storage.
+
+### Authentication
+
+Required. You must be authenticated to delete files.
+
+### Rate limiting
+
+27 requests per minute per user.
+
+### Request body
+
+<ParamField body="url" type="string" required>
+  The blob URL of the file to delete
+</ParamField>
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Whether the deletion was successful
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X POST 'https://your-domain.com/api/upload/delete' \
+  -H 'Content-Type: application/json' \
+  -H 'Cookie: next-auth.session-token=YOUR_SESSION_TOKEN' \
+  -d '{
+    "url": "https://blob.vercel-storage.com/abc123.jpg"
+  }'
+```
+
+### Example response
+
+```json
+{
+  "success": true
+}
+```
+
+### Behavior
+
+- Only deletes files from Vercel Blob storage
+- Does not automatically remove file references from posts
+- Users should delete files when removing media from posts
+- Useful for cleanup when post creation is cancelled
+
+### Error responses
+
+<CodeGroup>
+```json 400 - No URL provided
+{
+  "error": "No URL provided"
+}
+```
+
+```json 401 - Unauthorized
+{
+  "error": "Unauthorized"
+}
+```
+
+```json 429 - Rate limit exceeded
+{
+  "error": "Rate limit exceeded",
+  "resetAt": "2024-01-01T12:00:00.000Z"
+}
+```
+
+```json 500 - Delete failed
+{
+  "error": "Error deleting file"
+}
+```
+</CodeGroup>
+
+<Note>
+Media files should be uploaded before creating a post. Include the returned `url` in the post's `media` array when calling `POST /api/post`.
+</Note>

@@ -76,7 +76,9 @@
               "api/users",
               "api/colleges",
               "api/notifications",
-              "api/search"
+              "api/search",
+              "api/onboarding",
+              "api/media"
             ]
           }
         ]

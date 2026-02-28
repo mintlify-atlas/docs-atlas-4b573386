@@ -1,0 +1,282 @@
+---
+title: Onboarding
+description: College verification and username availability endpoints
+---
+
+## Validate college email
+
+`GET /api/validateCollege`
+
+Validate that an email address belongs to a registered college domain.
+
+### Rate limiting
+
+100 requests per minute per IP address.
+
+### Query parameters
+
+<ParamField query="email" type="string" required>
+  Email address to validate
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="string">
+  College identifier
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  College name
+</ResponseField>
+
+### Example request
+
+```bash
+curl 'https://your-domain.com/api/validateCollege?email=student@college.edu'
+```
+
+### Example response
+
+```json
+{
+  "id": "clh1234567890",
+  "name": "University Example"
+}
+```
+
+### Error responses
+
+<CodeGroup>
+```json 400 - Invalid email
+{
+  "error": "Invalid email"
+}
+```
+
+```json 404 - College not found
+{
+  "error": "College not found"
+}
+```
+
+```json 429 - Rate limit exceeded
+{
+  "error": "Too many requests"
+}
+```
+</CodeGroup>
+
+---
+
+## Send verification email
+
+`POST /api/verifyCollege/send`
+
+Send a verification code to the provided email address.
+
+### Rate limiting
+
+5 requests per minute per IP address (strict limit to prevent abuse).
+
+### Request body
+
+<ParamField body="email" type="string" required>
+  College email address to send verification code to
+</ParamField>
+
+### Response
+
+<ResponseField name="message" type="string">
+  Success message: `"Success"`
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Email delivery data from Resend API
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X POST 'https://your-domain.com/api/verifyCollege/send' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "email": "student@college.edu"
+  }'
+```
+
+### Example response
+
+```json
+{
+  "message": "Success",
+  "data": {
+    "id": "email-id-from-resend"
+  }
+}
+```
+
+### Behavior
+
+- Generates a time-limited verification code using SHA-256 hashing
+- Sends an email from `echo@bmohak.xyz` with the verification code
+- Code is valid for a limited time (security measure)
+- Email includes both HTML and plain text versions
+
+### Error responses
+
+<CodeGroup>
+```json 400 - Missing email
+{
+  "error": "Email is required"
+}
+```
+
+```json 429 - Rate limit exceeded
+{
+  "error": "Too many requests"
+}
+```
+
+```json 500 - Email send failed
+{
+  "error": "Failed to send email"
+}
+```
+</CodeGroup>
+
+---
+
+## Verify email code
+
+`POST /api/verifyCollege/verify`
+
+Verify the code sent to the user's email address.
+
+### Request body
+
+<ParamField body="email" type="string" required>
+  The email address that received the verification code
+</ParamField>
+
+<ParamField body="code" type="string" required>
+  The 6-digit verification code from the email
+</ParamField>
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Whether verification was successful
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Success message: `"Code Verified"`
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X POST 'https://your-domain.com/api/verifyCollege/verify' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "email": "student@college.edu",
+    "code": "123456"
+  }'
+```
+
+### Example response
+
+```json
+{
+  "success": true,
+  "message": "Code Verified"
+}
+```
+
+### Error responses
+
+<CodeGroup>
+```json 400 - Missing email
+{
+  "error": "Email is required"
+}
+```
+
+```json 400 - Missing code
+{
+  "error": "Code is required"
+}
+```
+
+```json 400 - Invalid code
+{
+  "error": "Invalid Code"
+}
+```
+</CodeGroup>
+
+---
+
+## Check username availability
+
+`GET /api/checkUserNameAvailability`
+
+Check if a username is available for registration.
+
+### Rate limiting
+
+50 requests per minute per IP address.
+
+### Query parameters
+
+<ParamField query="username" type="string" required>
+  Username to check for availability (must be valid format)
+</ParamField>
+
+### Response
+
+<ResponseField name="available" type="boolean">
+  Whether the username is available
+</ResponseField>
+
+### Example request
+
+```bash
+curl 'https://your-domain.com/api/checkUserNameAvailability?username=john_doe'
+```
+
+### Example response
+
+```json
+{
+  "available": true
+}
+```
+
+### Behavior
+
+- Validates username format before checking availability
+- Checks against existing usernames in the database
+- Returns `false` if username already exists
+- Returns `true` if username is available
+
+### Error responses
+
+<CodeGroup>
+```json 400 - Missing username
+{
+  "error": "Username is required"
+}
+```
+
+```json 400 - Invalid username format
+{
+  "error": "Invalid username"
+}
+```
+
+```json 429 - Rate limit exceeded
+{
+  "error": "Too many requests"
+}
+```
+</CodeGroup>
